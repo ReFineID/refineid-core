@@ -22,18 +22,20 @@
 //! safety floors different surfaces stop at.
 
 pub mod credentials;
+pub mod manage;
 pub mod retry_risk;
 pub mod verify;
 
-pub use credentials::{CredentialInputError, CredentialRole, Pin1, Pin2, UnvalidatedSecret};
+pub use credentials::{CredentialInputError, CredentialRole, Pin1, Pin2, Puk, UnvalidatedSecret};
+pub use manage::{ManageOutcome, PinManageOps, classify_manage_sw};
 pub use retry_risk::{
     PinRetryRisk, pin1_status_permits_consumer_authentication, pin1_status_permits_reusable_cache,
 };
 pub use verify::{
     AuthError, ORGANIZATIONAL_PIN_MAX_LENGTH, PIN_STORED_LENGTH, PIN1_REFERENCE,
-    PIN1_REFERENCE_ORGANIZATIONAL, PIN2_REFERENCE, PIN2_REFERENCE_ORGANIZATIONAL, PinOps,
-    PinReferenceScheme, PinSlot, PinStatus, VerifyOutcome, classify_pin_status_sw,
-    classify_verify_sw,
+    PIN1_REFERENCE_ORGANIZATIONAL, PIN2_REFERENCE, PIN2_REFERENCE_ORGANIZATIONAL, PUK_REFERENCE,
+    PUK_REFERENCE_ORGANIZATIONAL, PinOps, PinReferenceScheme, PinSlot, PinStatus, VerifyOutcome,
+    classify_pin_status_sw, classify_verify_sw,
 };
 
 #[cfg(test)]
@@ -43,7 +45,7 @@ mod public_contract_tests {
     use serde::{Serialize, de::DeserializeOwned};
     use zeroize::{Zeroize, ZeroizeOnDrop};
 
-    use super::{Pin1, Pin2, UnvalidatedSecret};
+    use super::{Pin1, Pin2, Puk, UnvalidatedSecret};
 
     trait AmbiguousIfImplemented<Disambiguator, Marker> {
         fn marker() {}
@@ -77,6 +79,7 @@ mod public_contract_tests {
     fn sensitive_public_types_preserve_ownership_contracts() {
         require_zeroize_on_drop::<Pin1>();
         require_zeroize_on_drop::<Pin2>();
+        require_zeroize_on_drop::<Puk>();
         require_zeroizable_boundary::<UnvalidatedSecret>();
 
         let _ = <Pin1 as AmbiguousIfImplemented<_, CloneMarker>>::marker;
@@ -92,6 +95,13 @@ mod public_contract_tests {
         let _ = <Pin2 as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
         let _ = <Pin2 as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
         let _ = <Pin2 as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
+
+        let _ = <Puk as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, ZeroizeMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
 
         let _ = <UnvalidatedSecret as AmbiguousIfImplemented<_, CloneMarker>>::marker;
         let _ = <UnvalidatedSecret as AmbiguousIfImplemented<_, CopyMarker>>::marker;

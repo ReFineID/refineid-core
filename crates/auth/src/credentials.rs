@@ -28,6 +28,10 @@ pub const PIN1_MIN_LENGTH: usize = 4;
 pub const PIN2_MIN_LENGTH: usize = 6;
 /// Stored length for both PIN roles from FINEID S4-1 v4.2 section 4.1.
 pub const PIN_MAX_LENGTH: usize = 12;
+/// Minimum PUK length: seven-digit activation PUKs exist in the field.
+pub const PUK_MIN_LENGTH: usize = 7;
+/// Maximum PUK length on the supported cards.
+pub const PUK_MAX_LENGTH: usize = 8;
 
 /// Explicitly unvalidated secret bytes at an input boundary.
 ///
@@ -60,6 +64,10 @@ pub enum CredentialRole {
     Pin1,
     /// Qualified-signature PIN.
     Pin2,
+    /// PIN Unblocking Key: resets a blocked PIN's retry counter while
+    /// setting a new value. It never authorises an operation, and it
+    /// spends its own counter.
+    Puk,
 }
 
 impl fmt::Display for CredentialRole {
@@ -67,6 +75,7 @@ impl fmt::Display for CredentialRole {
         match self {
             Self::Pin1 => f.write_str("PIN1"),
             Self::Pin2 => f.write_str("PIN2"),
+            Self::Puk => f.write_str("PUK"),
         }
     }
 }
@@ -113,15 +122,16 @@ impl SecretDigits {
         input: UnvalidatedSecret,
         role: CredentialRole,
         minimum: usize,
+        maximum: usize,
     ) -> Result<Self, CredentialInputError> {
         if input.bytes.is_empty() {
             return Err(CredentialInputError::Empty { role });
         }
-        if input.bytes.len() < minimum || input.bytes.len() > PIN_MAX_LENGTH {
+        if input.bytes.len() < minimum || input.bytes.len() > maximum {
             return Err(CredentialInputError::WrongLength {
                 role,
                 expected_min: minimum,
-                expected_max: PIN_MAX_LENGTH,
+                expected_max: maximum,
                 got: input.bytes.len(),
             });
         }
@@ -134,7 +144,7 @@ impl SecretDigits {
                 return Err(CredentialInputError::WrongLength {
                     role,
                     expected_min: minimum,
-                    expected_max: PIN_MAX_LENGTH,
+                    expected_max: maximum,
                     got: input.bytes.len(),
                 });
             }
@@ -174,7 +184,8 @@ impl Pin1 {
     /// Returns [`CredentialInputError`] unless the input is
     /// [`PIN1_MIN_LENGTH`] through [`PIN_MAX_LENGTH`] ASCII digits.
     pub fn reconstruct(input: UnvalidatedSecret) -> Result<Self, CredentialInputError> {
-        SecretDigits::reconstruct(input, CredentialRole::Pin1, PIN1_MIN_LENGTH).map(Self)
+        SecretDigits::reconstruct(input, CredentialRole::Pin1, PIN1_MIN_LENGTH, PIN_MAX_LENGTH)
+            .map(Self)
     }
 
     /// Number of validated digits.
@@ -216,7 +227,8 @@ impl Pin2 {
     /// Returns [`CredentialInputError`] unless the input is
     /// [`PIN2_MIN_LENGTH`] through [`PIN_MAX_LENGTH`] ASCII digits.
     pub fn reconstruct(input: UnvalidatedSecret) -> Result<Self, CredentialInputError> {
-        SecretDigits::reconstruct(input, CredentialRole::Pin2, PIN2_MIN_LENGTH).map(Self)
+        SecretDigits::reconstruct(input, CredentialRole::Pin2, PIN2_MIN_LENGTH, PIN_MAX_LENGTH)
+            .map(Self)
     }
 
     /// Number of validated digits.
@@ -238,6 +250,52 @@ impl Pin2 {
 impl fmt::Debug for Pin2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Pin2([redacted])")
+    }
+}
+
+/// Validated PUK value.
+///
+/// The PUK is not a PIN: it never authorises an operation on the user's
+/// behalf. It resets a blocked PIN's retry counter while setting a new
+/// value (RESET RETRY COUNTER, FINEID S1 v4.2 section 3.5.4). The PUK
+/// spends its own retry counter, and exhausting it is terminal for the
+/// card, so a caller holds its retry floor against the PUK's counter, not
+/// the target PIN's. Like the PIN roles, this type is not `Clone`, `Copy`,
+/// serializable, or raw-debuggable, and there is no cache path.
+#[derive(ZeroizeOnDrop)]
+pub struct Puk(SecretDigits);
+
+impl Puk {
+    /// Consume unvalidated input and reconstruct a PUK.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialInputError`] unless the input is
+    /// [`PUK_MIN_LENGTH`] through [`PUK_MAX_LENGTH`] ASCII digits.
+    pub fn reconstruct(input: UnvalidatedSecret) -> Result<Self, CredentialInputError> {
+        SecretDigits::reconstruct(input, CredentialRole::Puk, PUK_MIN_LENGTH, PUK_MAX_LENGTH)
+            .map(Self)
+    }
+
+    /// Number of validated digits.
+    #[must_use]
+    pub const fn digit_count(&self) -> usize {
+        self.0.digit_count()
+    }
+
+    /// Borrow the validated digits for the credential-command builder.
+    ///
+    /// This is the crate-private path the unblock operations consume the
+    /// PUK through: the digits never leave this crate as raw bytes, and no
+    /// public `as_bytes` accessor exists.
+    pub(crate) fn digits(&self) -> &[u8] {
+        self.0.secret_bytes()
+    }
+}
+
+impl fmt::Debug for Puk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Puk([redacted])")
     }
 }
 
@@ -270,7 +328,7 @@ impl core::error::Error for CredentialInputError {}
 mod tests {
     use super::{
         CredentialInputError, CredentialRole, PIN_MAX_LENGTH, PIN1_MIN_LENGTH, PIN2_MIN_LENGTH,
-        Pin1, Pin2, UnvalidatedSecret,
+        PUK_MAX_LENGTH, PUK_MIN_LENGTH, Pin1, Pin2, Puk, UnvalidatedSecret,
     };
     use zeroize::Zeroize;
 
@@ -278,6 +336,8 @@ mod tests {
     const PIN1_TOO_SHORT_LENGTH: usize = PIN1_MIN_LENGTH - 1;
     const PIN2_TOO_SHORT_LENGTH: usize = PIN2_MIN_LENGTH - 1;
     const TOO_LONG_LENGTH: usize = PIN_MAX_LENGTH + 1;
+    const PUK_TOO_SHORT_LENGTH: usize = PUK_MIN_LENGTH - 1;
+    const PUK_TOO_LONG_LENGTH: usize = PUK_MAX_LENGTH + 1;
 
     fn input(bytes: &[u8]) -> UnvalidatedSecret {
         UnvalidatedSecret::from_owned_bytes(bytes.to_vec())
@@ -391,6 +451,46 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn puk_boundary_lengths_are_enforced() {
+        assert!(matches!(
+            Puk::reconstruct(input(b"")),
+            Err(CredentialInputError::Empty {
+                role: CredentialRole::Puk,
+            })
+        ));
+        assert!(matches!(
+            Puk::reconstruct(digits(PUK_TOO_SHORT_LENGTH)),
+            Err(CredentialInputError::WrongLength {
+                role: CredentialRole::Puk,
+                expected_min: PUK_MIN_LENGTH,
+                expected_max: PUK_MAX_LENGTH,
+                got: PUK_TOO_SHORT_LENGTH,
+            })
+        ));
+        assert!(Puk::reconstruct(digits(PUK_MIN_LENGTH)).is_ok());
+        assert!(Puk::reconstruct(digits(PUK_MAX_LENGTH)).is_ok());
+        assert!(matches!(
+            Puk::reconstruct(digits(PUK_TOO_LONG_LENGTH)),
+            Err(CredentialInputError::WrongLength {
+                role: CredentialRole::Puk,
+                expected_min: PUK_MIN_LENGTH,
+                expected_max: PUK_MAX_LENGTH,
+                got: PUK_TOO_LONG_LENGTH,
+            })
+        ));
+        assert!(matches!(
+            Puk::reconstruct(non_ascii_digits(PUK_MIN_LENGTH)),
+            Err(CredentialInputError::NonDigit {
+                role: CredentialRole::Puk,
+                ..
+            })
+        ));
+        let puk = Puk::reconstruct(digits(PUK_MAX_LENGTH)).expect("valid PUK fixture");
+        assert_eq!(puk.digit_count(), PUK_MAX_LENGTH);
+        assert_eq!(format!("{puk:?}"), "Puk([redacted])");
     }
 
     #[test]

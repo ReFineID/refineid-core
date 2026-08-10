@@ -203,6 +203,31 @@ hardware-validated here: no organizational card was available for
 verification, so the organizational VERIFY and signing chains rest on the
 specification and the behaviour reference rather than an observed card.
 
+The eighth slice admits PIN change and unblock in `refineid-auth`:
+
+- a `Puk` role type, reconstructed from unvalidated input like the PIN
+  roles: non-clonable, zeroize-on-drop, redacted, with no raw accessor
+  and no cache path. It never authorises an operation; it resets a
+  blocked PIN and spends its own counter;
+- `change_pin1` and `change_pin2` drive CHANGE REFERENCE DATA, presenting
+  the current value and the new one in one command; `unblock_pin1` and
+  `unblock_pin2` drive RESET RETRY COUNTER. The citizen card unblocks in
+  one command carrying the PUK and the new PIN; the organizational card
+  verifies the PUK as its own object first and then resets with only the
+  new PIN, and a refused PUK ends the flow before the reset;
+- each resolves the credential numbering first, refuses an over-length
+  organizational credential before any command, and reports a typed
+  outcome that names a wrong current-PIN-or-PUK separately from a locked
+  method.
+
+Every credential travels only as a credential command, consumed exactly
+once, so a change or unblock can never be replayed. These commands are
+card-mutating and retry-consuming, and exhausting the PUK is terminal, so
+no path is described as working against a real card: the wire and the
+two-chain choreography are covered by scripted-transport tests and traced
+to the FINEID S1 (sections 3.11 and 3.12) and S4-2 specifications, and no
+counter-consuming path was run to exhaustion on hardware.
+
 ## Hardware validation
 
 Slices two through five have been exercised against both shipped FINEID
@@ -237,8 +262,6 @@ generic command types do not enter the public tree in any form.
 Still outside the public tree:
 
 - transport adapters until their custody and fault paths pass review;
-- the PIN change and PUK-unblock command chains, which are
-  card-mutating and need the separately supplied credential role types;
 - host-side-encoded RSA signing (for PSS) and PSO:DECIPHER, which need
   command chaining and a decipher path;
 - automatic retry paths of any kind around credential commands; and

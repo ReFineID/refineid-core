@@ -79,6 +79,17 @@ deployment details.
   S4-1, and S1) and the ISO/IEC 7816 series. Secret,
   personal-information, protocol, and dependency scans were performed for
   this slice.
+- **PIN change and unblock.** Publication under Apache-2.0 directed on
+  2026-08-11 for the `refineid-auth` management slice: the `Puk` role
+  type and the CHANGE REFERENCE DATA and RESET RETRY COUNTER chains for
+  both card families, including the organizational two-command unblock.
+  Reconstructed against the private development tree's proven wire shapes
+  and cross-checked against the country-neutral behaviour reference; the
+  card-mutating and PUK-consuming paths were not run to exhaustion on
+  hardware. Constants and flow are traced to the DVV FINEID
+  specifications (S1 sections 3.11 and 3.12, S4-2 section 4.3) and
+  ISO/IEC 7816-8. Secret, personal-information, protocol, and dependency
+  scans were performed for this slice.
 
 Before a later slice is admitted, its review must record:
 

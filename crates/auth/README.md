@@ -19,14 +19,25 @@ typed PIN at its own length under its own references, with no padding, and
 a PIN longer than the organizational maximum is refused locally before any
 command spends a retry.
 
-The PIN change and PUK-unblock chains, which are card-mutating and need
-the separately supplied credential role types, follow in a later slice.
-No verification path is described as working against a real card until it
-is observed on hardware with the retry counter checked; the
-organizational numbering, which no card was available to exercise, rests
-on the specification and the behaviour reference.
+`PinManageOps` adds the card-mutating chains: `change_pin1`/`change_pin2`
+(CHANGE REFERENCE DATA) and `unblock_pin1`/`unblock_pin2` (RESET RETRY
+COUNTER). Unblocking presents a `Puk` -- its own non-clonable,
+zeroize-on-drop role type, which never authorises an operation and spends
+its own counter. The citizen card unblocks in one command; the
+organizational card verifies the PUK as its own object and then resets
+with only the new PIN. A wrong current PIN or PUK is reported as a typed
+outcome, not an error.
+
+No verification, change, or unblock path is described as working against a
+real card until it is observed on hardware with the retry counter checked.
+The change and unblock chains are card-mutating and PUK-consuming -- and
+exhausting the PUK is terminal -- so they were not run to exhaustion on
+hardware; together with the organizational numbering, which no card was
+available to exercise, they rest on the specification and the behaviour
+reference.
 
 Constants are traced to the
 [DVV FINEID specifications](https://dvv.fi/en/fineid-specifications) (S1
-section 3.5, S4-2) and ISO/IEC 7816-4. See the repository's
+sections 3.5, 3.11, and 3.12, and S4-2) and ISO/IEC 7816-4 and -8. See the
+repository's
 [credential custody contract](../../docs/security/credential-custody.md).

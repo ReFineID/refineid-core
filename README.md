@@ -15,11 +15,11 @@ crates stay transport-agnostic and country-profile-neutral.
 - `crates/apdu` (`refineid-apdu`) -- typed ISO 7816-4 commands, status
   words, and the card transport port, with separate replay-safe and
   credential command ownership paths.
-- `crates/auth` (`refineid-auth`) -- PIN role types, VERIFY PIN1/PIN2
-  over the credential-command path for both citizen and organizational
-  cards, the counter-safe status probe that resolves the card's
-  credential numbering, and the retry-risk policy; the change and unblock
-  chains follow in a later slice.
+- `crates/auth` (`refineid-auth`) -- PIN and PUK role types, VERIFY
+  PIN1/PIN2 over the credential-command path for both citizen and
+  organizational cards, the counter-safe status probe that resolves the
+  card's credential numbering, the CHANGE REFERENCE DATA and RESET RETRY
+  COUNTER (unblock) chains, and the retry-risk policy.
 - `crates/ber` (`refineid-ber`) -- minimal BER-TLV encoder and decoder
   with a typed tag layer.
 - `crates/pace` (`refineid-pace`) -- Card Access Number input type, the
@@ -32,12 +32,13 @@ crates stay transport-agnostic and country-profile-neutral.
   the citizen chain (PSO:HASH then an empty PSO:CDS) and the
   organizational chain (an inline-digest PSO:CDS).
 
-Planned work adds the PIN change and unblock chains into `refineid-auth`,
-and host-side-encoded RSA (PSS) and PSO:DECIPHER into `refineid-sign`.
+Planned work adds host-side-encoded RSA (PSS) and PSO:DECIPHER into
+`refineid-sign`, and an X.509/SPKI layer over the certificates the read
+path returns.
 
 ## Security posture
 
-- PIN1 and PIN2 are distinct non-clonable types.
+- PIN1, PIN2, and the PUK are distinct non-clonable types.
 - PIN2 retention is bounded to a one-minute convenience window measured from
   the last card-confirmed use; the window never extends to PIN management.
 - Credential and CAN input are accepted only through explicitly unvalidated,

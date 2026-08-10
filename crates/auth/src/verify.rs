@@ -47,15 +47,24 @@ pub const PIN1_REFERENCE_ORGANIZATIONAL: u8 = 0x03;
 /// identifier (FINEID S4-2 v4.0 section 4.2).
 pub const PIN2_REFERENCE_ORGANIZATIONAL: u8 = 0x04;
 
+/// Citizen-card PUK reference: the PIN Unblocking Key in the PKCS#15
+/// numbering. Used to read the PUK's state; the citizen unblock command
+/// carries the PUK in its data field rather than under this reference.
+pub const PUK_REFERENCE: u8 = 0x83;
+/// Organizational-card PUK reference: the PIN PUK security-data-object
+/// identifier (FINEID S4-2 v4.0 section 4.3.2). The organizational
+/// unblock verifies the PUK under this reference before the reset.
+pub const PUK_REFERENCE_ORGANIZATIONAL: u8 = 0x12;
+
 /// Largest credential the organizational card stores; it compares at the
 /// typed length and caps every credential here (FINEID S4-2 v4.0
 /// section 4.3).
 pub const ORGANIZATIONAL_PIN_MAX_LENGTH: usize = 8;
 
 /// VERIFY instruction byte (ISO 7816-4 section 7.5.6).
-const VERIFY_INS: u8 = 0x20;
+pub(crate) const VERIFY_INS: u8 = 0x20;
 /// VERIFY P1 selecting the verify operation.
-const VERIFY_P1: u8 = 0x00;
+pub(crate) const VERIFY_P1: u8 = 0x00;
 
 /// FINEID stored length for both PIN slots: the padded block length in
 /// bytes (FINEID S1 v4.2 section 3.5).
@@ -107,6 +116,15 @@ impl PinReferenceScheme {
             (Self::Citizen, PinSlot::Pin2) => PIN2_REFERENCE,
             (Self::Organizational, PinSlot::Pin1) => PIN1_REFERENCE_ORGANIZATIONAL,
             (Self::Organizational, PinSlot::Pin2) => PIN2_REFERENCE_ORGANIZATIONAL,
+        }
+    }
+
+    /// The PUK reference byte under this numbering.
+    #[must_use]
+    pub const fn puk_reference(self) -> u8 {
+        match self {
+            Self::Citizen => PUK_REFERENCE,
+            Self::Organizational => PUK_REFERENCE_ORGANIZATIONAL,
         }
     }
 }
@@ -214,22 +232,79 @@ pub const fn classify_pin_status_sw(sw: StatusWord) -> PinStatus {
     }
 }
 
-/// Build the VERIFY credential block for `scheme` into a fresh buffer,
-/// returning the buffer and the number of bytes the card compares.
+/// Largest credential body this crate assembles: two stored-length
+/// blocks, as a CHANGE REFERENCE DATA (current, new) or a citizen RESET
+/// RETRY COUNTER (unblocking code, new) carries.
+pub(crate) const CREDENTIAL_BODY_SCRATCH: usize = 2 * PIN_STORED_LENGTH;
+
+/// Write each digit group as a `scheme`-shaped credential block into
+/// `out`, returning the total byte count the card compares.
 ///
 /// The citizen card compares a block right-padded with the pad byte to
 /// the stored length; the organizational card compares the bare typed
 /// digits at their own length, because it publishes no padding and a
-/// padded block would fail the comparison and spend a retry.
-fn credential_block(scheme: PinReferenceScheme, digits: &[u8]) -> ([u8; PIN_STORED_LENGTH], usize) {
-    let mut block = [PIN_PAD_BYTE; PIN_STORED_LENGTH];
-    let copy_len = digits.len().min(PIN_STORED_LENGTH);
-    block[..copy_len].copy_from_slice(&digits[..copy_len]);
-    let compared = match scheme {
-        PinReferenceScheme::Citizen => PIN_STORED_LENGTH,
-        PinReferenceScheme::Organizational => copy_len,
+/// padded block would fail the comparison and spend a retry. `out` must
+/// be pre-filled with the pad byte so the citizen padding falls out of
+/// the untouched tail.
+pub(crate) fn write_credential_blocks(
+    scheme: PinReferenceScheme,
+    groups: &[&[u8]],
+    out: &mut [u8; CREDENTIAL_BODY_SCRATCH],
+) -> usize {
+    let mut total = 0;
+    for group in groups {
+        let copy_len = group.len().min(PIN_STORED_LENGTH);
+        out[total..total + copy_len].copy_from_slice(&group[..copy_len]);
+        total += match scheme {
+            PinReferenceScheme::Citizen => PIN_STORED_LENGTH,
+            PinReferenceScheme::Organizational => copy_len,
+        };
+    }
+    total
+}
+
+/// Assemble the credential blocks for `groups` into one credential
+/// command under `header` and `scheme`, transmit it once, and return the
+/// card's status word for the caller to classify.
+///
+/// The organizational card compares at the typed length and caps every
+/// credential at [`ORGANIZATIONAL_PIN_MAX_LENGTH`], so a longer group can
+/// never match; it is refused locally before any command, so no retry is
+/// spent learning it.
+///
+/// # Errors
+///
+/// [`AuthError`] on an unsupported length, a command-assembly failure, a
+/// transport failure, or a transport state transition.
+pub(crate) fn credential_exchange<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    scheme: PinReferenceScheme,
+    header: CommandHeader,
+    groups: &[&[u8]],
+) -> Result<StatusWord, AuthError<T::Error>> {
+    if matches!(scheme, PinReferenceScheme::Organizational) {
+        for group in groups {
+            if group.len() > ORGANIZATIONAL_PIN_MAX_LENGTH {
+                return Err(AuthError::LengthUnsupported {
+                    got: group.len(),
+                    max: ORGANIZATIONAL_PIN_MAX_LENGTH,
+                });
+            }
+        }
+    }
+    let mut block = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
+    let total = write_credential_blocks(scheme, groups, &mut block);
+    let body = match CredentialBody::take_from(&mut block[..total]) {
+        Ok(body) => body,
+        Err(error) => return Err(AuthError::Command(error)),
     };
-    (block, compared)
+    let command = CredentialCommand::assemble(header, body);
+    let response = transport
+        .transmit_credential(command)
+        .map_err(AuthError::Transport)?
+        .into_response()
+        .map_err(AuthError::Outcome)?;
+    Ok(response.status_word())
 }
 
 /// PIN management operations, layered as default methods on every
@@ -410,34 +485,14 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        if matches!(scheme, PinReferenceScheme::Organizational)
-            && digits.len() > ORGANIZATIONAL_PIN_MAX_LENGTH
-        {
-            return Err(AuthError::LengthUnsupported {
-                got: digits.len(),
-                max: ORGANIZATIONAL_PIN_MAX_LENGTH,
-            });
-        }
-        let (mut block, compared) = credential_block(scheme, digits);
-        let body = match CredentialBody::take_from(&mut block[..compared]) {
-            Ok(body) => body,
-            Err(error) => return Err(AuthError::Command(error)),
+        let header = CommandHeader {
+            class: ApduClass::Plain,
+            instruction: VERIFY_INS,
+            p1: VERIFY_P1,
+            p2: scheme.reference(slot),
         };
-        let command = CredentialCommand::assemble(
-            CommandHeader {
-                class: ApduClass::Plain,
-                instruction: VERIFY_INS,
-                p1: VERIFY_P1,
-                p2: scheme.reference(slot),
-            },
-            body,
-        );
-        let response = self
-            .transmit_credential(command)
-            .map_err(AuthError::Transport)?
-            .into_response()
-            .map_err(AuthError::Outcome)?;
-        Ok(classify_verify_sw(response.status_word()))
+        let status = credential_exchange(self, scheme, header, &[digits])?;
+        Ok(classify_verify_sw(status))
     }
 }
 
@@ -446,9 +501,10 @@ impl<T: CardTransport + ?Sized> PinOps for T {}
 #[cfg(test)]
 mod tests {
     use super::{
-        PIN_PAD_BYTE, PIN_STORED_LENGTH, PIN1_REFERENCE, PIN1_REFERENCE_ORGANIZATIONAL, PinOps,
-        PinReferenceScheme, PinSlot, PinStatus, VERIFY_INS, VERIFY_P1, VerifyOutcome,
-        classify_pin_status_sw, classify_verify_sw, credential_block,
+        CREDENTIAL_BODY_SCRATCH, PIN_PAD_BYTE, PIN_STORED_LENGTH, PIN1_REFERENCE,
+        PIN1_REFERENCE_ORGANIZATIONAL, PinOps, PinReferenceScheme, PinSlot, PinStatus, VERIFY_INS,
+        VERIFY_P1, VerifyOutcome, classify_pin_status_sw, classify_verify_sw,
+        write_credential_blocks,
     };
     use crate::credentials::{Pin1, UnvalidatedSecret};
     use refineid_apdu::{
@@ -592,19 +648,41 @@ mod tests {
 
     #[test]
     fn citizen_block_pads_and_organizational_block_stays_typed_length() {
-        let (citizen, citizen_compared) = credential_block(PinReferenceScheme::Citizen, b"1234");
-        assert_eq!(citizen_compared, PIN_STORED_LENGTH);
+        let mut citizen = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
+        let citizen_total =
+            write_credential_blocks(PinReferenceScheme::Citizen, &[b"1234"], &mut citizen);
+        assert_eq!(citizen_total, PIN_STORED_LENGTH);
         assert_eq!(&citizen[..PIN_FIXTURE_LEN], b"1234");
         assert!(
-            citizen[PIN_FIXTURE_LEN..]
+            citizen[PIN_FIXTURE_LEN..PIN_STORED_LENGTH]
                 .iter()
-                .all(|&byte| byte == super::PIN_PAD_BYTE)
+                .all(|&byte| byte == PIN_PAD_BYTE)
         );
 
-        let (organizational, org_compared) =
-            credential_block(PinReferenceScheme::Organizational, b"1234");
-        assert_eq!(org_compared, PIN_FIXTURE_LEN);
+        let mut organizational = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
+        let org_total = write_credential_blocks(
+            PinReferenceScheme::Organizational,
+            &[b"1234"],
+            &mut organizational,
+        );
+        assert_eq!(org_total, PIN_FIXTURE_LEN);
         assert_eq!(&organizational[..PIN_FIXTURE_LEN], b"1234");
+    }
+
+    #[test]
+    fn a_two_block_citizen_body_pads_each_block_to_the_stored_length() {
+        let mut body = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
+        let total = write_credential_blocks(
+            PinReferenceScheme::Citizen,
+            &[b"1234", b"567890"],
+            &mut body,
+        );
+        assert_eq!(total, CREDENTIAL_BODY_SCRATCH);
+        assert_eq!(&body[..PIN_FIXTURE_LEN], b"1234");
+        assert_eq!(
+            &body[PIN_STORED_LENGTH..PIN_STORED_LENGTH + b"567890".len()],
+            b"567890"
+        );
     }
 
     #[test]

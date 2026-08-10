@@ -1,0 +1,595 @@
+// Copyright 2026 Petri Koistinen
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! CHANGE REFERENCE DATA and RESET RETRY COUNTER.
+//!
+//! These operations mutate the card. CHANGE REFERENCE DATA replaces a
+//! PIN's value once the current value is presented; RESET RETRY COUNTER
+//! (the unblock) clears a blocked PIN's retry counter and sets a new
+//! value, presenting the PUK. Each consumes its validated credentials
+//! through the crate-private path and ships them only as credential
+//! commands, consumed exactly once.
+//!
+//! Every flow resolves the card's reference numbering first (the
+//! counter-safe probe on [`PinOps`]) and then presents the credential, so
+//! a resolution probe can never cost a typed entry. The citizen card
+//! unblocks in one RESET RETRY COUNTER carrying the PUK and the new PIN;
+//! the organizational card takes two commands, verifying the PUK as its
+//! own object before a reset that carries only the new PIN (FINEID S4-2
+//! v4.0 section 4.3.2). A wrong PUK spends the PUK's own counter, and
+//! exhausting it is terminal for the card, so a caller must have cleared
+//! the retry floor for the unblocking credential, not the target PIN.
+
+use refineid_apdu::{ApduClass, CardTransport, CommandHeader, PinRetries, StatusWord};
+
+use crate::credentials::{Pin1, Pin2, Puk};
+use crate::verify::{
+    AuthError, PinOps, PinReferenceScheme, PinSlot, VERIFY_INS, VERIFY_P1, credential_exchange,
+};
+
+/// CHANGE REFERENCE DATA instruction (ISO 7816-8; FINEID S1 v4.2
+/// section 3.11).
+const CHANGE_REFERENCE_DATA_INS: u8 = 0x24;
+/// CHANGE REFERENCE DATA P1: the data field carries the current
+/// reference data followed by the new.
+const CHANGE_P1_CURRENT_THEN_NEW: u8 = 0x00;
+
+/// RESET RETRY COUNTER instruction (ISO 7816-8; FINEID S1 v4.2
+/// section 3.12).
+const RESET_RETRY_COUNTER_INS: u8 = 0x2C;
+/// RESET RETRY COUNTER P1: the data field carries the unblocking code
+/// followed by the new reference data. This is the citizen card's
+/// single-command form.
+const RESET_P1_CODE_THEN_NEW: u8 = 0x00;
+/// RESET RETRY COUNTER P1: the data field carries only the new reference
+/// data; the unblocking credential was verified as its own object first.
+/// The organizational card's second command (FINEID S4-2 v4.0
+/// section 4.3.2).
+const RESET_P1_NEW_ONLY: u8 = 0x02;
+
+/// Outcome of a credential-update round trip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManageOutcome {
+    /// The credential was updated: the new value is set and the retry
+    /// counter is at its maximum, but the credential is not presented.
+    Ok,
+    /// The presented credential was wrong -- the current PIN for a change,
+    /// or the PUK for an unblock. `retries_left` attempts remain on that
+    /// credential's own counter before it locks. Zero means the next
+    /// failure locks it, which for a PUK is terminal for the card.
+    WrongCredential {
+        /// Attempts remaining on the presented credential's counter.
+        retries_left: PinRetries,
+    },
+    /// The method is blocked or its reference data is invalidated; the
+    /// update cannot proceed.
+    Locked,
+    /// Any other status word, surfaced for the caller to map.
+    Other(u16),
+}
+
+/// Decode a credential-update response status word into an outcome.
+#[must_use]
+pub const fn classify_manage_sw(sw: StatusWord) -> ManageOutcome {
+    match sw {
+        StatusWord::Success => ManageOutcome::Ok,
+        StatusWord::PinIncorrect { retries } => ManageOutcome::WrongCredential {
+            retries_left: retries,
+        },
+        StatusWord::AuthenticationBlocked | StatusWord::ReferenceDataInvalidated => {
+            ManageOutcome::Locked
+        }
+        other => ManageOutcome::Other(other.as_u16()),
+    }
+}
+
+/// Send one CHANGE REFERENCE DATA for `slot`: the current credential
+/// block, then the new.
+fn change<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    scheme: PinReferenceScheme,
+    slot: PinSlot,
+    current: &[u8],
+    new: &[u8],
+) -> Result<ManageOutcome, AuthError<T::Error>> {
+    let header = CommandHeader {
+        class: ApduClass::Plain,
+        instruction: CHANGE_REFERENCE_DATA_INS,
+        p1: CHANGE_P1_CURRENT_THEN_NEW,
+        p2: scheme.reference(slot),
+    };
+    let status = credential_exchange(transport, scheme, header, &[current, new])?;
+    Ok(classify_manage_sw(status))
+}
+
+/// Unblock `slot`, resetting its retry counter and setting `new`.
+///
+/// The citizen card does this in one RESET RETRY COUNTER carrying the PUK
+/// and the new PIN. The organizational card verifies the PUK as its own
+/// object first, and only an accepted PUK lets the reset -- carrying only
+/// the new PIN -- go out; a refused PUK ends the flow with its own
+/// outcome and the reset is never sent.
+fn unblock<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    scheme: PinReferenceScheme,
+    slot: PinSlot,
+    puk: &[u8],
+    new: &[u8],
+) -> Result<ManageOutcome, AuthError<T::Error>> {
+    match scheme {
+        PinReferenceScheme::Citizen => {
+            let header = CommandHeader {
+                class: ApduClass::Plain,
+                instruction: RESET_RETRY_COUNTER_INS,
+                p1: RESET_P1_CODE_THEN_NEW,
+                p2: scheme.reference(slot),
+            };
+            let status = credential_exchange(transport, scheme, header, &[puk, new])?;
+            Ok(classify_manage_sw(status))
+        }
+        PinReferenceScheme::Organizational => {
+            let verify_header = CommandHeader {
+                class: ApduClass::Plain,
+                instruction: VERIFY_INS,
+                p1: VERIFY_P1,
+                p2: scheme.puk_reference(),
+            };
+            let verified = classify_manage_sw(credential_exchange(
+                transport,
+                scheme,
+                verify_header,
+                &[puk],
+            )?);
+            if !matches!(verified, ManageOutcome::Ok) {
+                return Ok(verified);
+            }
+            let reset_header = CommandHeader {
+                class: ApduClass::Plain,
+                instruction: RESET_RETRY_COUNTER_INS,
+                p1: RESET_P1_NEW_ONLY,
+                p2: scheme.reference(slot),
+            };
+            let status = credential_exchange(transport, scheme, reset_header, &[new])?;
+            Ok(classify_manage_sw(status))
+        }
+    }
+}
+
+/// PIN change and unblock operations, layered as default methods on every
+/// [`CardTransport`].
+///
+/// Bring the trait into scope to use the methods; the blanket
+/// implementation applies to every transport. The scheme-free entry
+/// points resolve the card's credential numbering first; a caller that
+/// will issue several operations resolves once with
+/// [`PinOps::resolve_pin_reference_scheme`] and passes the result to the
+/// `_with_scheme` forms.
+///
+/// These operations mutate the card and are not idempotent. A wrong
+/// current PIN or PUK spends a retry, and for the PUK exhaustion is
+/// terminal, so a caller must hold the retry floor for the presented
+/// credential before calling.
+pub trait PinManageOps: PinOps {
+    /// Change PIN1, presenting the current value and setting the new one,
+    /// resolving the card's numbering first.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition. A wrong
+    /// current PIN is not an error; it is [`ManageOutcome::WrongCredential`].
+    fn change_pin1(
+        &mut self,
+        current: Pin1,
+        new: Pin1,
+    ) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.change_pin1_with_scheme(scheme, current, new)
+    }
+
+    /// Change PIN2, resolving the card's numbering first.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinManageOps::change_pin1`].
+    fn change_pin2(
+        &mut self,
+        current: Pin2,
+        new: Pin2,
+    ) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.change_pin2_with_scheme(scheme, current, new)
+    }
+
+    /// Change PIN1 under an explicit numbering.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinManageOps::change_pin1`], plus
+    /// [`AuthError::LengthUnsupported`] when the organizational card
+    /// cannot store the typed length.
+    fn change_pin1_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+        current: Pin1,
+        new: Pin1,
+    ) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        change(self, scheme, PinSlot::Pin1, current.digits(), new.digits())
+    }
+
+    /// Change PIN2 under an explicit numbering.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinManageOps::change_pin1_with_scheme`].
+    fn change_pin2_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+        current: Pin2,
+        new: Pin2,
+    ) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        change(self, scheme, PinSlot::Pin2, current.digits(), new.digits())
+    }
+
+    /// Unblock PIN1 with the PUK, setting a new value, resolving the
+    /// card's numbering first.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition. A wrong
+    /// PUK is not an error; it is [`ManageOutcome::WrongCredential`]
+    /// carrying the PUK's own remaining attempts.
+    fn unblock_pin1(&mut self, puk: Puk, new: Pin1) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.unblock_pin1_with_scheme(scheme, puk, new)
+    }
+
+    /// Unblock PIN2 with the PUK, resolving the card's numbering first.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinManageOps::unblock_pin1`].
+    fn unblock_pin2(&mut self, puk: Puk, new: Pin2) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.unblock_pin2_with_scheme(scheme, puk, new)
+    }
+
+    /// Unblock PIN1 under an explicit numbering.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinManageOps::unblock_pin1`], plus
+    /// [`AuthError::LengthUnsupported`] when the organizational card
+    /// cannot store the typed length.
+    fn unblock_pin1_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+        puk: Puk,
+        new: Pin1,
+    ) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        unblock(self, scheme, PinSlot::Pin1, puk.digits(), new.digits())
+    }
+
+    /// Unblock PIN2 under an explicit numbering.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinManageOps::unblock_pin1_with_scheme`].
+    fn unblock_pin2_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+        puk: Puk,
+        new: Pin2,
+    ) -> Result<ManageOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        unblock(self, scheme, PinSlot::Pin2, puk.digits(), new.digits())
+    }
+}
+
+impl<T: CardTransport + ?Sized> PinManageOps for T {}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CHANGE_P1_CURRENT_THEN_NEW, CHANGE_REFERENCE_DATA_INS, ManageOutcome, PinManageOps,
+        RESET_P1_CODE_THEN_NEW, RESET_P1_NEW_ONLY, RESET_RETRY_COUNTER_INS, classify_manage_sw,
+    };
+    use crate::credentials::{Pin1, Puk, UnvalidatedSecret};
+    use crate::verify::{CREDENTIAL_BODY_SCRATCH, VERIFY_INS, VERIFY_P1};
+    use crate::{
+        AuthError, ORGANIZATIONAL_PIN_MAX_LENGTH, PIN_STORED_LENGTH, PUK_REFERENCE_ORGANIZATIONAL,
+        PinReferenceScheme, PinSlot,
+    };
+    use refineid_apdu::{
+        ApduClass, CardTransport, CommandApdu, CredentialCommand, PinRetries, ResponseApdu,
+        StatusWord, TransportOutcome,
+    };
+
+    /// A retry count for the tests.
+    const TWO_RETRIES: u8 = 2;
+    /// Commands the organizational unblock sends: a VERIFY then a RESET.
+    const ORG_UNBLOCK_COMMAND_COUNT: usize = 2;
+    /// Wire index of the class byte.
+    const CLA_INDEX: usize = 0;
+    /// Wire index of the instruction byte.
+    const INS_INDEX: usize = 1;
+    /// Wire index of the P1 byte.
+    const P1_INDEX: usize = 2;
+    /// Wire index of the P2 reference byte.
+    const P2_INDEX: usize = 3;
+    /// Wire index of the Lc byte.
+    const LC_INDEX: usize = 4;
+    /// Wire offset of the data field: past the header and the Lc byte.
+    const DATA_OFFSET: usize = 5;
+    /// A valid PUK fixture, eight digits.
+    const PUK_DIGITS: &[u8] = b"12345678";
+    /// A valid current-PIN fixture.
+    const CURRENT_DIGITS: &[u8] = b"1234";
+    /// A valid new-PIN fixture.
+    const NEW_DIGITS: &[u8] = b"5678";
+
+    fn response(sw: StatusWord) -> ResponseApdu {
+        let [sw1, sw2] = sw.as_u16().to_be_bytes();
+        ResponseApdu {
+            body: vec![],
+            sw1,
+            sw2,
+        }
+    }
+
+    fn pin1(digits: &[u8]) -> Pin1 {
+        Pin1::reconstruct(UnvalidatedSecret::from_owned_bytes(digits.to_vec()))
+            .expect("valid PIN1 fixture")
+    }
+
+    fn puk(digits: &[u8]) -> Puk {
+        Puk::reconstruct(UnvalidatedSecret::from_owned_bytes(digits.to_vec()))
+            .expect("valid PUK fixture")
+    }
+
+    /// Records each credential command's wire and answers with the next
+    /// scripted status word.
+    struct Recorder {
+        commands: Vec<Vec<u8>>,
+        responses: Vec<StatusWord>,
+        cursor: usize,
+    }
+
+    impl Recorder {
+        fn new(responses: Vec<StatusWord>) -> Self {
+            Self {
+                commands: vec![],
+                responses,
+                cursor: 0,
+            }
+        }
+    }
+
+    impl CardTransport for Recorder {
+        type Error = String;
+
+        fn transmit(&mut self, _command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
+            Err("an explicit-scheme management flow issues no plain command".to_owned())
+        }
+
+        fn transmit_credential(
+            &mut self,
+            command: CredentialCommand,
+        ) -> Result<TransportOutcome, Self::Error> {
+            self.commands.push(command.expose_wire(<[u8]>::to_vec));
+            let sw = *self
+                .responses
+                .get(self.cursor)
+                .ok_or_else(|| format!("script exhausted at command {}", self.cursor))?;
+            self.cursor += 1;
+            Ok(TransportOutcome::Response(response(sw)))
+        }
+    }
+
+    #[test]
+    fn manage_classifier_covers_the_outcomes() {
+        assert_eq!(classify_manage_sw(StatusWord::Success), ManageOutcome::Ok);
+        let two = PinRetries::from_nibble(TWO_RETRIES).expect("fits a nibble");
+        assert_eq!(
+            classify_manage_sw(StatusWord::PinIncorrect { retries: two }),
+            ManageOutcome::WrongCredential { retries_left: two }
+        );
+        assert_eq!(
+            classify_manage_sw(StatusWord::AuthenticationBlocked),
+            ManageOutcome::Locked
+        );
+        assert_eq!(
+            classify_manage_sw(StatusWord::ReferenceDataInvalidated),
+            ManageOutcome::Locked
+        );
+        assert_eq!(
+            classify_manage_sw(StatusWord::FileNotFound),
+            ManageOutcome::Other(StatusWord::FileNotFound.as_u16())
+        );
+    }
+
+    #[test]
+    fn citizen_change_pin1_presents_current_then_new_padded_blocks() {
+        let mut transport = Recorder::new(vec![StatusWord::Success]);
+        let outcome = transport
+            .change_pin1_with_scheme(
+                PinReferenceScheme::Citizen,
+                pin1(CURRENT_DIGITS),
+                pin1(NEW_DIGITS),
+            )
+            .expect("scripted change succeeds");
+        assert_eq!(outcome, ManageOutcome::Ok);
+        assert_eq!(transport.commands.len(), 1);
+        let wire = &transport.commands[0];
+        assert_eq!(wire[CLA_INDEX], ApduClass::Plain.as_byte());
+        assert_eq!(wire[INS_INDEX], CHANGE_REFERENCE_DATA_INS);
+        assert_eq!(wire[P1_INDEX], CHANGE_P1_CURRENT_THEN_NEW);
+        assert_eq!(
+            wire[P2_INDEX],
+            PinReferenceScheme::Citizen.reference(PinSlot::Pin1)
+        );
+        // Two blocks, each padded to the stored length.
+        assert_eq!(usize::from(wire[LC_INDEX]), CREDENTIAL_BODY_SCRATCH);
+        assert_eq!(
+            &wire[DATA_OFFSET..DATA_OFFSET + CURRENT_DIGITS.len()],
+            CURRENT_DIGITS
+        );
+        let new_start = DATA_OFFSET + PIN_STORED_LENGTH;
+        assert_eq!(&wire[new_start..new_start + NEW_DIGITS.len()], NEW_DIGITS);
+    }
+
+    #[test]
+    fn organizational_change_pin1_presents_typed_length_blocks() {
+        let mut transport = Recorder::new(vec![StatusWord::Success]);
+        transport
+            .change_pin1_with_scheme(
+                PinReferenceScheme::Organizational,
+                pin1(CURRENT_DIGITS),
+                pin1(NEW_DIGITS),
+            )
+            .expect("scripted change succeeds");
+        let wire = &transport.commands[0];
+        assert_eq!(wire[INS_INDEX], CHANGE_REFERENCE_DATA_INS);
+        assert_eq!(
+            wire[P2_INDEX],
+            PinReferenceScheme::Organizational.reference(PinSlot::Pin1)
+        );
+        // Bare typed blocks, back to back, no padding.
+        assert_eq!(
+            usize::from(wire[LC_INDEX]),
+            CURRENT_DIGITS.len() + NEW_DIGITS.len()
+        );
+        let mut both = CURRENT_DIGITS.to_vec();
+        both.extend_from_slice(NEW_DIGITS);
+        assert_eq!(&wire[DATA_OFFSET..], both.as_slice());
+    }
+
+    #[test]
+    fn citizen_unblock_pin1_presents_puk_then_new() {
+        let mut transport = Recorder::new(vec![StatusWord::Success]);
+        let outcome = transport
+            .unblock_pin1_with_scheme(
+                PinReferenceScheme::Citizen,
+                puk(PUK_DIGITS),
+                pin1(NEW_DIGITS),
+            )
+            .expect("scripted unblock succeeds");
+        assert_eq!(outcome, ManageOutcome::Ok);
+        assert_eq!(transport.commands.len(), 1);
+        let wire = &transport.commands[0];
+        assert_eq!(wire[INS_INDEX], RESET_RETRY_COUNTER_INS);
+        assert_eq!(wire[P1_INDEX], RESET_P1_CODE_THEN_NEW);
+        assert_eq!(
+            wire[P2_INDEX],
+            PinReferenceScheme::Citizen.reference(PinSlot::Pin1)
+        );
+        assert_eq!(usize::from(wire[LC_INDEX]), CREDENTIAL_BODY_SCRATCH);
+        assert_eq!(
+            &wire[DATA_OFFSET..DATA_OFFSET + PUK_DIGITS.len()],
+            PUK_DIGITS
+        );
+    }
+
+    #[test]
+    fn organizational_unblock_verifies_the_puk_then_resets_new_only() {
+        let mut transport = Recorder::new(vec![StatusWord::Success, StatusWord::Success]);
+        let outcome = transport
+            .unblock_pin1_with_scheme(
+                PinReferenceScheme::Organizational,
+                puk(PUK_DIGITS),
+                pin1(NEW_DIGITS),
+            )
+            .expect("scripted unblock succeeds");
+        assert_eq!(outcome, ManageOutcome::Ok);
+        assert_eq!(transport.commands.len(), ORG_UNBLOCK_COMMAND_COUNT);
+
+        // First: VERIFY the PUK as its own object under the org PUK reference.
+        let verify = &transport.commands[0];
+        assert_eq!(verify[INS_INDEX], VERIFY_INS);
+        assert_eq!(verify[P1_INDEX], VERIFY_P1);
+        assert_eq!(verify[P2_INDEX], PUK_REFERENCE_ORGANIZATIONAL);
+        assert_eq!(&verify[DATA_OFFSET..], PUK_DIGITS);
+
+        // Second: RESET carrying only the new PIN under the target reference.
+        let reset = &transport.commands[1];
+        assert_eq!(reset[INS_INDEX], RESET_RETRY_COUNTER_INS);
+        assert_eq!(reset[P1_INDEX], RESET_P1_NEW_ONLY);
+        assert_eq!(
+            reset[P2_INDEX],
+            PinReferenceScheme::Organizational.reference(PinSlot::Pin1)
+        );
+        assert_eq!(&reset[DATA_OFFSET..], NEW_DIGITS);
+    }
+
+    #[test]
+    fn organizational_unblock_stops_when_the_puk_is_refused() {
+        let two = PinRetries::from_nibble(TWO_RETRIES).expect("fits a nibble");
+        let mut transport = Recorder::new(vec![StatusWord::PinIncorrect { retries: two }]);
+        let outcome = transport
+            .unblock_pin1_with_scheme(
+                PinReferenceScheme::Organizational,
+                puk(PUK_DIGITS),
+                pin1(NEW_DIGITS),
+            )
+            .expect("scripted unblock completes");
+        assert_eq!(
+            outcome,
+            ManageOutcome::WrongCredential { retries_left: two }
+        );
+        // The refused PUK ends the flow: the reset never went out.
+        assert_eq!(transport.commands.len(), 1);
+    }
+
+    #[test]
+    fn organizational_change_refuses_an_overlong_new_pin_before_any_command() {
+        let overlong = b"123456789";
+        let mut transport = Recorder::new(vec![]);
+        let error = transport
+            .change_pin1_with_scheme(
+                PinReferenceScheme::Organizational,
+                pin1(CURRENT_DIGITS),
+                pin1(overlong),
+            )
+            .expect_err("the organizational card caps a credential at eight");
+        let is_length_error = matches!(error, AuthError::LengthUnsupported { .. });
+        assert!(is_length_error);
+        if let AuthError::LengthUnsupported { got, max } = error {
+            assert_eq!(got, overlong.len());
+            assert_eq!(max, ORGANIZATIONAL_PIN_MAX_LENGTH);
+        }
+        assert!(transport.commands.is_empty());
+    }
+}
