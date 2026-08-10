@@ -429,7 +429,7 @@ mod tests {
     /// Status-word length in bytes.
     const SW_LEN: usize = 2;
     /// A decrypted response payload; the ASCII value is synthetic.
-    const RESPONSE_PAYLOAD: &[u8] = b"DEAD";
+    const RESPONSE_PAYLOAD: &[u8] = b"TEST";
     /// A short decrypted response payload; the ASCII value is synthetic.
     const SHORT_PAYLOAD: &[u8] = b"hi";
     /// A command data field; the ASCII value is synthetic.
