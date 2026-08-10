@@ -164,9 +164,10 @@ path, so signing composes over the PACE secure-messaging transport
 unchanged once the gating PIN is verified. The pre-hashed chains fit the
 short form -- the digest is small and the card returns the signature
 through the adapter's chained response -- so no extended-length or
-command-chaining support is needed. Host-side-encoded RSA (for PSS,
-which needs command chaining) and PSO:DECIPHER follow in a later slice.
-The wire, algorithm references, and length checks are covered by
+command-chaining support is needed. RSASSA-PSS follows in a later slice,
+and PSO:DECIPHER -- whose modulus-wide ciphertext needs command chaining
+-- after that. The wire, algorithm references, and length checks are
+covered by
 scripted-transport tests and cross-checked against the specification;
 no signing path is described as working against a real card until it is
 observed on hardware.
@@ -228,6 +229,17 @@ two-chain choreography are covered by scripted-transport tests and traced
 to the FINEID S1 (sections 3.11 and 3.12) and S4-2 specifications, and no
 counter-consuming path was run to exhaustion on hardware.
 
+The ninth slice admits RSASSA-PSS signing in `refineid-sign`:
+`sign_prehashed_sha256_rsa_pss` drives the same pre-hashed choreography as
+the PKCS#1 chain with the PSS algorithm reference, and returns a
+PSS-typed signature. PSS is a card-native scheme -- the card applies the
+padding from the host digest and draws the salt itself, so no host-side
+encoding and no command chaining are involved, and two signatures over
+one digest differ. The reference and the specification's algorithm-
+reference table agree on the scheme byte; the wire is covered by
+scripted-transport tests, and the RSA keys live on the older card
+generation.
+
 ## Hardware validation
 
 Slices two through five have been exercised against both shipped FINEID
@@ -262,8 +274,8 @@ generic command types do not enter the public tree in any form.
 Still outside the public tree:
 
 - transport adapters until their custody and fault paths pass review;
-- host-side-encoded RSA signing (for PSS) and PSO:DECIPHER, which need
-  command chaining and a decipher path;
+- PSO:DECIPHER, whose modulus-wide ciphertext needs outgoing command
+  chaining the apdu layer does not yet build;
 - automatic retry paths of any kind around credential commands; and
 - the legacy PIN cache.
 

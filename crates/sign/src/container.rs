@@ -25,6 +25,12 @@ use core::marker::PhantomData;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RsaPkcs1Sha256;
 
+/// RSASSA-PSS over SHA-256. The card performs the PSS encoding and the
+/// private-key operation from the host-supplied digest; the salt is the
+/// card's, so two signatures over the same digest differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RsaPssSha256;
+
 /// A raw RSASSA-PKCS1 private-key operation with no hash indicated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RsaPkcs1;

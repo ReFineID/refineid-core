@@ -28,13 +28,13 @@ crates stay transport-agnostic and country-profile-neutral.
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
 - `crates/sign` (`refineid-sign`) -- card-side signing: the MSE/PSO
-  choreography for the pre-hashed RSA and P-384 ECDSA chains, over both
-  the citizen chain (PSO:HASH then an empty PSO:CDS) and the
-  organizational chain (an inline-digest PSO:CDS).
+  choreography for the pre-hashed RSA (PKCS#1 and PSS) and P-384 ECDSA
+  chains, over both the citizen chain (PSO:HASH then an empty PSO:CDS) and
+  the organizational chain (an inline-digest PSO:CDS).
 
-Planned work adds host-side-encoded RSA (PSS) and PSO:DECIPHER into
-`refineid-sign`, and an X.509/SPKI layer over the certificates the read
-path returns.
+Planned work adds PSO:DECIPHER (whose modulus-wide ciphertext needs
+command chaining) into `refineid-sign`, and an X.509/SPKI layer over the
+certificates the read path returns.
 
 ## Security posture
 

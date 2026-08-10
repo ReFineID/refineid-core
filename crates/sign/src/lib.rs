@@ -26,10 +26,13 @@
 //! these commands carry no credential material and use the plain
 //! transport path.
 //!
-//! This slice admits the pre-hashed chains that fit the short-form
-//! command: RSASSA-PKCS1-v1_5 over SHA-256 for the RSA keys, and ECDSA
-//! over P-384 for the newer keys. Host-side-encoded RSA (for PSS, which
-//! needs command chaining) and PSO:DECIPHER follow in a later slice.
+//! The pre-hashed chains all fit the short-form command: RSASSA-PKCS1-v1_5
+//! and RSASSA-PSS over SHA-256 for the RSA keys, and ECDSA over P-384 for
+//! the newer keys. PSS is a card-native scheme -- the card applies the
+//! padding from the digest, so the choreography is the pre-hashed chain
+//! with a different algorithm reference, not a host-encoded block.
+//! PSO:DECIPHER, whose modulus-wide ciphertext needs command chaining,
+//! follows in a later slice.
 
 pub mod commands;
 pub mod container;
@@ -40,7 +43,7 @@ use commands::{
     ExternalHashValue, MseSet, PsoComputeDigitalSignature, PsoHashExternal, SHA256_LEN, SHA384_LEN,
     SignatureAlgRef,
 };
-pub use container::{EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, Signature};
+pub use container::{EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, RsaPssSha256, Signature};
 
 /// PKCS#15 key reference for the authentication key (PIN1-gated).
 pub const KEY_REF_AUTH: u8 = 0x01;
@@ -256,6 +259,45 @@ pub trait SignOps: CardTransport {
             self,
             scheme,
             SignatureAlgRef::SHA256_RSA_PKCS1,
+            key,
+            ExternalHashValue::Sha256(digest),
+        )?;
+        if bytes.len() != RSA_3072_SIG_BYTES {
+            return Err(SignError::UnexpectedSignatureLength {
+                got: bytes.len(),
+                expected: RSA_3072_SIG_BYTES,
+            });
+        }
+        Ok(Signature::new(bytes))
+    }
+
+    /// Sign a SHA-256 digest with an RSA key under RSASSA-PSS, returning
+    /// the RSA-3072 signature.
+    ///
+    /// The card applies the PSS padding itself, so the chain matches the
+    /// pre-hashed PKCS#1 path -- only the algorithm reference differs.
+    /// PSS uses a card-generated salt, so signing the same digest twice
+    /// yields different bytes. The key's PIN must already be verified in
+    /// the card session, and `scheme` must be the family the session
+    /// resolved.
+    ///
+    /// # Errors
+    ///
+    /// Any stage failure, or a signature length other than
+    /// [`RSA_3072_SIG_BYTES`].
+    fn sign_prehashed_sha256_rsa_pss(
+        &mut self,
+        scheme: SignScheme,
+        key: KeyRef,
+        digest: [u8; SHA256_LEN],
+    ) -> Result<Signature<RsaPssSha256>, SignError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let bytes = drive_chain(
+            self,
+            scheme,
+            SignatureAlgRef::SHA256_RSA_PSS,
             key,
             ExternalHashValue::Sha256(digest),
         )?;

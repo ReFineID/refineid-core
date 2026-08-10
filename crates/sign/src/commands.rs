@@ -96,6 +96,11 @@ impl SignatureAlgRef {
     /// SHA-256 (high nibble 4) with ECDSA (low nibble 4): the P-384 key
     /// signing a SHA-256 digest, required by some relying parties.
     pub const SHA256_ECDSA: Self = Self { byte: 0x44 };
+    /// SHA-256 (high nibble 4) with RSASSA-PSS (low nibble 5): the RSA
+    /// key producing a PSS signature. FINEID cards apply the PSS padding
+    /// themselves, so the choreography matches the pre-hashed RSA chain
+    /// (FINEID S1 v4.2 section 3.6.3 Table 6).
+    pub const SHA256_RSA_PSS: Self = Self { byte: 0x45 };
 
     /// The wire byte.
     #[must_use]
@@ -291,6 +296,8 @@ mod tests {
     const ALG_SHA384_ECDSA: u8 = 0x54;
     /// The documented SHA-256 + ECDSA algorithm-reference byte.
     const ALG_SHA256_ECDSA: u8 = 0x44;
+    /// The documented SHA-256 + RSASSA-PSS algorithm-reference byte.
+    const ALG_SHA256_RSA_PSS: u8 = 0x45;
 
     /// The expected MSE:Set wire for `alg` and `key_ref`, assembled from
     /// the named framing constants: header, Lc, then the algorithm and
@@ -353,6 +360,10 @@ mod tests {
         assert_eq!(SignatureAlgRef::SHA256_RSA_PKCS1.as_byte(), ALG_SHA256_RSA);
         assert_eq!(SignatureAlgRef::SHA384_ECDSA.as_byte(), ALG_SHA384_ECDSA);
         assert_eq!(SignatureAlgRef::SHA256_ECDSA.as_byte(), ALG_SHA256_ECDSA);
+        assert_eq!(
+            SignatureAlgRef::SHA256_RSA_PSS.as_byte(),
+            ALG_SHA256_RSA_PSS
+        );
     }
 
     #[test]

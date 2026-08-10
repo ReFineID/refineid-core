@@ -16,11 +16,14 @@ carry no credential material and ride the plain transport path, so the
 same operations work over a PACE secure-messaging transport unchanged.
 
 `SignOps::sign_prehashed_sha256_rsa` covers the RSA keys (RSASSA-PKCS1
-over SHA-256, an RSA-3072 signature) and `sign_prehashed_sha384_ecdsa`
-covers the newer P-384 keys (ECDSA over SHA-384, raw `r || s`). The
-signature bytes are returned in an algorithm-typed container. Host-side
-encoded RSA (for PSS, which needs command chaining) and PSO:DECIPHER
-follow in a later slice.
+over SHA-256, an RSA-3072 signature), `sign_prehashed_sha256_rsa_pss`
+covers the same keys under RSASSA-PSS, and `sign_prehashed_sha384_ecdsa`
+covers the newer P-384 keys (ECDSA over SHA-384, raw `r || s`). PSS is a
+card-native scheme: the card applies the padding from the digest, so the
+choreography matches the pre-hashed chain with a different algorithm
+reference. The signature bytes are returned in an algorithm-typed
+container. PSO:DECIPHER, whose modulus-wide ciphertext needs command
+chaining, follows in a later slice.
 
 No signing path is described as working against a real card until it is
 observed on hardware; the organizational chain, which no card was

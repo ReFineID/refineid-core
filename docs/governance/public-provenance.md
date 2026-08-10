@@ -90,6 +90,17 @@ deployment details.
   specifications (S1 sections 3.11 and 3.12, S4-2 section 4.3) and
   ISO/IEC 7816-8. Secret, personal-information, protocol, and dependency
   scans were performed for this slice.
+- **RSASSA-PSS signing.** Publication under Apache-2.0 directed on
+  2026-08-11 for the `refineid-sign` PSS addition: the SHA-256 PSS
+  algorithm reference, the `sign_prehashed_sha256_rsa_pss` operation, and
+  the PSS-typed signature container. PSS is a card-native scheme reusing
+  the pre-hashed choreography, so no new wire path was needed.
+  Reconstructed against the private development tree's proven shapes and
+  cross-checked against the behaviour reference and the specification's
+  algorithm-reference table. Constants are traced to the DVV FINEID
+  specifications (S1 section 3.6.3 Table 6) and ISO/IEC 7816-8. Secret,
+  personal-information, protocol, and dependency scans were performed for
+  this slice.
 
 Before a later slice is admitted, its review must record:
 

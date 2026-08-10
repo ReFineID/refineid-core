@@ -195,6 +195,34 @@ fn organizational_sign_skips_pso_hash_and_carries_the_digest_inline() {
 }
 
 #[test]
+fn citizen_rsa_pss_signs_over_the_loaded_hash_under_the_pss_reference() {
+    let digest = [DIGEST_FILL; SHA256_LEN];
+    let signature = vec![SIG_FILL; RSA_3072_SIG_BYTES];
+    let mut transport = Scripted::new(vec![
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA256_RSA_PSS,
+                KeyRef::Auth,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha256(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(), success(signature.clone())),
+    ]);
+
+    let result = transport
+        .sign_prehashed_sha256_rsa_pss(SignScheme::Citizen, KeyRef::Auth, digest)
+        .expect("scripted PSS sign succeeds");
+    assert_eq!(result.as_bytes(), signature.as_slice());
+    assert_eq!(result.len(), RSA_3072_SIG_BYTES);
+    assert!(transport.drained());
+}
+
+#[test]
 fn an_unexpected_signature_length_is_rejected() {
     let digest = [DIGEST_FILL; SHA256_LEN];
     // The card returns a short signature: an RSA key that is not
