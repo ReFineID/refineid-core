@@ -171,9 +171,13 @@ impl TransportErrorExt for &'static str {}
 /// The credential path is separate and consumed by value. An adapter
 /// implementing [`CardTransport::transmit_credential`] must send the
 /// exposed bytes exactly once: no retry on any status word or fault, no
-/// correction, no chaining that duplicates the buffer, no retention
+/// correction, no re-sending of the credential buffer, no retention
 /// beyond its send path, and no logging or tracing of the wire bytes.
-/// Scratch copies the backend requires must be zeroized after the send.
+/// It must still settle a chained response: a card may answer a
+/// credential command with a "more data" status, and the adapter
+/// fetches the remainder with follow-up commands that carry no
+/// credential material. Scratch copies the backend requires must be
+/// zeroized after the send.
 pub trait CardTransport {
     /// Adapter-specific error type; `Display` for diagnostics and
     /// [`TransportErrorExt`] for the typed fault classifier.

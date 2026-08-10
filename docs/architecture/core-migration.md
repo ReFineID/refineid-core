@@ -133,6 +133,28 @@ is observed on hardware with the retry counter checked before and after,
 and PIN2 and card-mutating tests stay off automation, per the admission
 checklist and the Apple release plan.
 
+## Hardware validation
+
+Slices two through five have been exercised against both shipped FINEID
+card generations over the contact interface: the PACE handshake and
+secure messaging, which the card accepts on contact; certificate reads,
+EF.TokenInfo parsing, and the status classifiers; and a PIN VERIFY over
+both the plain and the secure-messaging credential paths. Every VERIFY
+was framed by the counter-safe status probe and run with the correct
+PIN, so no retry counter was consumed and no credential was locked. The
+counter read as pristine before each verification and as verified after.
+The reconstruction required no change to pass on either generation.
+
+Two behaviours the validation recorded, for the transport adapters that
+remain outside this tree: the newer card requires the PKCS#15
+application selected before a VERIFY, where the older card is more
+permissive; and a card may answer a credential command with a chained
+"more data" response, so the adapter settles it on the credential path
+as well as the plain one. The contactless interface, where PACE is
+mandatory rather than optional, remains to be exercised; the
+cryptography is identical across interfaces and is validated over
+contact.
+
 ## Quarantined until redesigned
 
 The admitted APDU slice replaces the quarantined designs from the private
