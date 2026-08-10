@@ -93,6 +93,27 @@ The third slice admits the read path:
   discovery and generation classification from certificate contents
   stay outside the core.
 
+The fourth slice admits the PACE secure channel in `refineid-pace`:
+
+- the `id-PACE-ECDH-GM-AES-CBC-CMAC-256` handshake over brainpoolP384r1
+  with the Card Access Number as the password, and the
+  secure-messaging layer that is itself a card transport;
+- the supporting primitives: brainpoolP384r1 field and point
+  arithmetic over fixed-width Montgomery form with no code-generating
+  macro, AES-CBC/ECB and AES-CMAC with the ICAO key derivation, the
+  algorithm-typed cipher and message-authentication containers, and the
+  single fail-closed random seam.
+
+The `refineid-apdu` credential command grew its storage ceiling in this
+slice so a secure-messaging wrap of the largest credential command still
+fits the fixed, off-heap buffer; the wrapping path takes custody of the
+wrapped wire and remains consumed exactly once. The handshake and its
+cryptography are covered by known-answer, property, and synthetic-peer
+tests; the full four-round wire choreography and any card-touching
+behaviour are validated on hardware before being described as working,
+per the admission checklist. PACE consumes no retry counter, so it is
+admitted without a retry-consuming hardware gate.
+
 ## Quarantined until redesigned
 
 The admitted APDU slice replaces the quarantined designs from the private

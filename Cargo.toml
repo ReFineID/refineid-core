@@ -20,7 +20,14 @@ repository = "https://github.com/ReFineID/refineid-core"
 [workspace.dependencies]
 refineid-apdu = { path = "crates/apdu" }
 refineid-ber = { path = "crates/ber" }
+aes = "0.9"
+cbc = "0.2"
+cmac = "0.8"
+crypto-bigint = { version = "0.7", features = ["alloc", "zeroize"] }
+getrandom = "0.4"
 proc-macro2 = { version = "1", features = ["span-locations"] }
+sha2 = "0.11"
+subtle = "2"
 rustc_lexer = "0.1"
 serde = "1"
 serde_json = "1"

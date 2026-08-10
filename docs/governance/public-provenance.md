@@ -33,6 +33,16 @@ deployment details.
   behind. Constants are traced to the DVV FINEID specifications (S4-2),
   ISO/IEC 7816-15, and ITU-T X.690. Secret, personal-information,
   protocol, and dependency scans were performed for this slice.
+- **PACE secure channel.** Publication under Apache-2.0 directed on
+  2026-08-10 for the `refineid-pace` slice: the PACE handshake,
+  secure messaging, the brainpoolP384r1 and symmetric primitives, and
+  the random seam. Reconstructed against the private development tree's
+  proven wire shapes, with the curve arithmetic re-expressed on a
+  macro-free fixed-width Montgomery form to satisfy the numeric-policy
+  gate. Constants and flow are traced to BSI TR-03110-3, ICAO Doc 9303
+  Part 11, RFC 5639, and the NIST AES and CMAC known-answer vectors.
+  Secret, personal-information, protocol, and dependency scans were
+  performed for this slice.
 
 Before a later slice is admitted, its review must record:
 

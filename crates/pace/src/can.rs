@@ -108,6 +108,15 @@ impl Can {
     pub const fn digit_count(&self) -> usize {
         CAN_DIGITS
     }
+
+    /// Borrow the validated digits for the PACE key-derivation step.
+    ///
+    /// This is the crate-private path the handshake consumes the CAN
+    /// through: the value never leaves this crate as raw bytes, and no
+    /// public `as_bytes` accessor exists.
+    pub(crate) const fn password_bytes(&self) -> &[u8; CAN_DIGITS] {
+        &self.0
+    }
 }
 
 impl fmt::Display for CanError {

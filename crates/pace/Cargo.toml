@@ -1,6 +1,6 @@
 [package]
 name = "refineid-pace"
-description = "Reviewed Card Access Number type and PACE secure channel"
+description = "PACE secure channel and Card Access Number type for FINEID cards"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,15 @@ doctest = false
 workspace = true
 
 [dependencies]
+refineid-apdu.workspace = true
+refineid-ber.workspace = true
+aes.workspace = true
+cbc.workspace = true
+cmac.workspace = true
+crypto-bigint.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+subtle.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

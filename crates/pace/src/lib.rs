@@ -12,14 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Reviewed Card Access Number type.
+//! The PACE secure channel for FINEID cards.
 //!
-//! Values crossing a trust boundary are deconstructed, validated once, and
-//! reconstructed as types whose constructors preserve their invariants.
+//! The Card Access Number input type is the trust boundary for the
+//! password; the handshake drives `id-PACE-ECDH-GM-AES-CBC-CMAC-256`
+//! over brainpoolP384r1 and hands its session keys to the
+//! secure-messaging layer, which is itself a card transport so the
+//! layers above it stay unaware of the protection. Values crossing a
+//! trust boundary are deconstructed, validated once, and reconstructed
+//! as types whose constructors preserve their invariants.
 
 pub mod can;
+pub mod commands;
+pub mod crypto;
+pub mod handshake;
+pub mod rng;
+pub mod secure_messaging;
 
 pub use can::{CAN_DIGITS, Can, CanError, UnvalidatedCan};
+pub use handshake::{
+    DOMAIN_REF_BRAINPOOL_P384_R1, PASSWORD_REF_CAN, PaceError, PaceSession, Ssc, run_pace_with_can,
+};
+pub use secure_messaging::{SmError, SmTransport};
 
 #[cfg(test)]
 mod public_contract_tests {

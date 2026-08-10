@@ -260,9 +260,23 @@ impl CommandApdu {
 /// old-and-new block pair.
 pub const CREDENTIAL_BODY_MAX: usize = 24;
 
-/// Capacity of a complete credential command: header, Lc, and data field.
-/// Credential commands are case 3; they carry no Le.
+/// Capacity of a plain, unwrapped credential command: header, Lc, and
+/// data field. Credential commands are case 3; they carry no Le.
 pub const CREDENTIAL_APDU_MAX: usize = APDU_HEADER_LEN + LC_LEN + CREDENTIAL_BODY_MAX;
+
+/// Storage capacity of a [`CredentialCommand`], sized for the largest
+/// form it must hold. A secure-messaging wrap of the largest plain
+/// credential command encrypts the padded data field into a `DO87`
+/// object and appends a `DO8E` message-authentication object, so the
+/// wrapped command is larger than the plain one; this ceiling covers
+/// that worst case with headroom, and the fixed array keeps credential
+/// wire off the heap where a reallocation could leave a copy.
+pub const CREDENTIAL_WIRE_MAX: usize = 64;
+
+// The wrapped-command storage must cover the plain command it may also
+// hold; a shrink below that would silently truncate an assembled
+// credential command.
+const _CREDENTIAL_WIRE_COVERS_PLAIN: () = assert!(CREDENTIAL_WIRE_MAX >= CREDENTIAL_APDU_MAX);
 
 /// Structural reason credential data was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -371,7 +385,7 @@ impl fmt::Debug for CredentialBody {
 pub struct CredentialCommand {
     /// Fixed-capacity wire storage; only the first `length` bytes are the
     /// command.
-    bytes: [u8; CREDENTIAL_APDU_MAX],
+    bytes: [u8; CREDENTIAL_WIRE_MAX],
     /// Wire length in bytes.
     length: u8,
 }
@@ -385,7 +399,7 @@ impl CredentialCommand {
     /// data field. The body is consumed; its storage zeroizes on drop.
     #[must_use]
     pub fn assemble(header: CommandHeader, body: CredentialBody) -> Self {
-        let mut bytes = [0_u8; CREDENTIAL_APDU_MAX];
+        let mut bytes = [0_u8; CREDENTIAL_WIRE_MAX];
         bytes[..APDU_HEADER_LEN].copy_from_slice(&header.to_bytes());
         bytes[APDU_HEADER_LEN] = body.length;
         let data_len = usize::from(body.length);
@@ -393,6 +407,42 @@ impl CredentialCommand {
         bytes[body_start..body_start + data_len].copy_from_slice(&body.bytes[..data_len]);
         let length = CREDENTIAL_WIRE_PREFIX + body.length;
         Self { bytes, length }
+    }
+
+    /// Take custody of pre-assembled credential wire bytes.
+    ///
+    /// The secure-messaging layer uses this to carry a wrapped credential
+    /// command: it computes the encrypted, authenticated wire and hands it
+    /// over here, and the source buffer is zeroized on every path so no
+    /// second copy of the credential material lingers. Structural validity
+    /// of the wire is the caller's responsibility; the type's contract is
+    /// custody, redaction, and single use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialBodyError`] when `source` is empty or exceeds
+    /// [`CREDENTIAL_WIRE_MAX`] bytes.
+    pub fn from_wire(source: &mut [u8]) -> Result<Self, CredentialBodyError> {
+        if source.is_empty() {
+            return Err(CredentialBodyError::Empty);
+        }
+        if source.len() > CREDENTIAL_WIRE_MAX {
+            let got = source.len();
+            source.zeroize();
+            return Err(CredentialBodyError::TooLong { got });
+        }
+        let length = match u8::try_from(source.len()) {
+            Ok(length) => length,
+            Err(_) => {
+                let got = source.len();
+                source.zeroize();
+                return Err(CredentialBodyError::TooLong { got });
+            }
+        };
+        let mut bytes = [0_u8; CREDENTIAL_WIRE_MAX];
+        bytes[..source.len()].copy_from_slice(source);
+        source.zeroize();
+        Ok(Self { bytes, length })
     }
 
     /// Wire length of the assembled command in bytes.
@@ -430,9 +480,9 @@ impl fmt::Debug for CredentialCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        APDU_HEADER_LEN, ApduClass, CREDENTIAL_APDU_MAX, CREDENTIAL_BODY_MAX, CommandApdu,
-        CommandDataError, CommandHeader, CredentialBody, CredentialBodyError, CredentialCommand,
-        LC_LEN, LE_LEN, SHORT_APDU_DATA_MAX,
+        APDU_HEADER_LEN, ApduClass, CREDENTIAL_APDU_MAX, CREDENTIAL_BODY_MAX, CREDENTIAL_WIRE_MAX,
+        CommandApdu, CommandDataError, CommandHeader, CredentialBody, CredentialBodyError,
+        CredentialCommand, LC_LEN, LE_LEN, SHORT_APDU_DATA_MAX,
     };
 
     /// Synthetic instruction byte for shape tests. The value has no
@@ -632,5 +682,35 @@ mod tests {
             APDU_HEADER_LEN + LC_LEN
         );
         assert_eq!(LE_LEN, LC_LEN);
+    }
+
+    #[test]
+    fn from_wire_takes_custody_of_wrapped_bytes() {
+        let over_plain = CREDENTIAL_APDU_MAX + 1;
+        let mut source = vec![TEST_P1; over_plain];
+        let command = CredentialCommand::from_wire(&mut source).expect("length is within capacity");
+        assert_eq!(command.len(), over_plain);
+        assert!(
+            source.iter().all(|byte| *byte == 0),
+            "source must be zeroized after custody transfer"
+        );
+        command.expose_wire(|wire| assert_eq!(wire.len(), over_plain));
+    }
+
+    #[test]
+    fn from_wire_boundaries_are_enforced() {
+        let mut empty: [u8; 0] = [];
+        assert!(matches!(
+            CredentialCommand::from_wire(&mut empty),
+            Err(CredentialBodyError::Empty)
+        ));
+
+        let over_len = CREDENTIAL_WIRE_MAX + 1;
+        let mut over = vec![TEST_P1; over_len];
+        assert!(matches!(
+            CredentialCommand::from_wire(&mut over),
+            Err(CredentialBodyError::TooLong { got }) if got == over_len
+        ));
+        assert!(over.iter().all(|byte| *byte == 0));
     }
 }

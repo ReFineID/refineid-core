@@ -28,9 +28,9 @@ pub mod status_word;
 pub mod transport;
 
 pub use command::{
-    APDU_HEADER_LEN, ApduClass, CREDENTIAL_APDU_MAX, CREDENTIAL_BODY_MAX, CommandApdu,
-    CommandDataError, CommandHeader, CredentialBody, CredentialBodyError, CredentialCommand,
-    SHORT_APDU_DATA_MAX,
+    APDU_HEADER_LEN, ApduClass, CREDENTIAL_APDU_MAX, CREDENTIAL_BODY_MAX, CREDENTIAL_WIRE_MAX,
+    CommandApdu, CommandDataError, CommandHeader, CredentialBody, CredentialBodyError,
+    CredentialCommand, SHORT_APDU_DATA_MAX,
 };
 pub use primitives::{Aid, AidError, FileId, Sfi, SfiError};
 pub use status_word::{PinRetries, StatusWord};

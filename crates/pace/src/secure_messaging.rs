@@ -1,0 +1,677 @@
+// Copyright 2026 Petri Koistinen
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! ISO 7816-4 secure messaging over the AES-256 session keys PACE
+//! produces (BSI TR-03110-3 section F).
+//!
+//! A wrapped command sets the secure-messaging class, steps the send
+//! sequence counter, encrypts any command data into a cryptogram
+//! object, protects the expected-length byte, and appends a
+//! message-authentication object over the counter, padded header, and
+//! objects. A wrapped response is authenticated the same way before its
+//! cryptogram is decrypted and its status object is read. A failed
+//! authentication breaks the channel.
+//!
+//! [`SmTransport`] is itself a card transport, so the layers above it
+//! see an ordinary transport and the secure-messaging mechanics stay
+//! invisible. Credential commands are protected the same way and remain
+//! consumed exactly once end to end.
+
+use subtle::ConstantTimeEq as _;
+use zeroize::Zeroizing;
+
+use refineid_apdu::{
+    ApduClass, CardTransport, CommandApdu, CommandHeader, CredentialCommand, ResponseApdu,
+    StatusWord, TransportErrorExt, TransportErrorKind, TransportOutcome,
+};
+use refineid_ber::BerTlvIter;
+
+use crate::crypto::container::{AesCbc, Ciphertext};
+use crate::crypto::symmetric::{
+    AES_BLOCK, Aes256Key, aes256_cbc_decrypt_no_padding, aes256_cbc_encrypt_no_padding,
+    aes256_cmac_truncated, aes256_ecb_encrypt_block,
+};
+use crate::handshake::{PaceSession, Ssc};
+
+/// Cryptogram object tag: the encrypted, padded command or response
+/// body. The first value byte is the padding-content indicator.
+const TAG_CRYPTOGRAM: u8 = 0x87;
+/// Protected expected-length object tag.
+const TAG_PROTECTED_LE: u8 = 0x97;
+/// Protected status-word object tag.
+const TAG_PROTECTED_STATUS: u8 = 0x99;
+/// Message-authentication object tag.
+const TAG_MAC: u8 = 0x8E;
+
+/// Padding-content indicator for ISO 7816-4 padding.
+const PADDING_INDICATOR: u8 = 0x01;
+/// ISO 7816-4 padding marker byte.
+const PAD_MARKER: u8 = 0x80;
+/// ISO 7816-4 padding filler byte.
+const PAD_FILLER: u8 = 0x00;
+
+/// Expected-length byte requesting every available response byte.
+const SM_LE_ANY: u8 = 0x00;
+
+/// The command-header length in bytes.
+const HEADER_LEN: usize = 4;
+/// Length of a protected status word, in bytes.
+const STATUS_LEN: usize = 2;
+/// Length of the truncated message-authentication tag, in bytes.
+const MAC_LEN: usize = 8;
+
+/// A secure-messaging channel over a raw transport with an established
+/// PACE session.
+///
+/// No `Debug`: the channel holds the session keys, which must never
+/// reach a formatter.
+pub struct SmTransport<T: CardTransport> {
+    inner: T,
+    k_enc: Aes256Key,
+    k_mac: Aes256Key,
+    ssc: Ssc,
+}
+
+/// A failure from the secure-messaging layer.
+#[derive(Debug)]
+pub enum SmError<E> {
+    /// An adapter-level transport failure.
+    Transport(E),
+    /// A malformed command or response at a named point.
+    Malformed(&'static str),
+    /// The card's message-authentication tag did not match; the channel
+    /// is broken.
+    MacMismatch,
+    /// A wrapped command exceeded the short form.
+    CommandTooLong,
+}
+
+impl<E: core::fmt::Display> core::fmt::Display for SmError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Transport(e) => write!(f, "SM transport: {e}"),
+            Self::Malformed(what) => write!(f, "SM: malformed {what}"),
+            Self::MacMismatch => f.write_str("SM: card authentication tag did not match"),
+            Self::CommandTooLong => f.write_str("SM: wrapped command exceeds the short form"),
+        }
+    }
+}
+
+impl<E: core::fmt::Debug + core::fmt::Display + 'static> core::error::Error for SmError<E> {}
+
+impl<E: TransportErrorExt> TransportErrorExt for SmError<E> {
+    fn kind(&self) -> TransportErrorKind {
+        match self {
+            Self::Transport(error) => error.kind(),
+            Self::Malformed(_) | Self::MacMismatch => TransportErrorKind::ProtocolDesync,
+            Self::CommandTooLong => TransportErrorKind::Backend,
+        }
+    }
+}
+
+impl<T: CardTransport> SmTransport<T> {
+    /// Adopt the keys and counter from a completed PACE handshake. The
+    /// session is consumed, so the caller keeps no copy of the keys.
+    pub fn new(inner: T, session: PaceSession) -> Self {
+        Self {
+            inner,
+            k_enc: session.k_enc,
+            k_mac: session.k_mac,
+            ssc: session.ssc,
+        }
+    }
+
+    /// Drop the secure-messaging layer and return the raw transport.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    /// Wrap a plain command APDU into a secure-messaging command,
+    /// returning its header and protected body. The command data, when
+    /// present, is encrypted; the padded plaintext is held in a
+    /// zeroizing buffer and wiped before return.
+    fn wrap(&mut self, plain: &[u8]) -> Result<(CommandHeader, Vec<u8>), SmError<T::Error>> {
+        let header: [u8; HEADER_LEN] = plain
+            .get(..HEADER_LEN)
+            .and_then(|slice| <[u8; HEADER_LEN]>::try_from(slice).ok())
+            .ok_or(SmError::Malformed("command shorter than its header"))?;
+        let [_class, instruction, p1, p2] = header;
+        let sm_header = CommandHeader {
+            class: ApduClass::SecureMessaging,
+            instruction,
+            p1,
+            p2,
+        };
+
+        let (data, le) = decode_short_apdu(plain)
+            .ok_or(SmError::Malformed("command is not a short-form case"))?;
+
+        self.ssc.increment();
+
+        let cryptogram = if data.is_empty() {
+            Vec::new()
+        } else {
+            let padded = Zeroizing::new(iso7816_4_pad(data));
+            let iv = aes256_ecb_encrypt_block(self.k_enc.as_bytes(), self.ssc.as_bytes());
+            let cipher = aes256_cbc_encrypt_no_padding(self.k_enc.as_bytes(), &iv, &padded)
+                .map_err(|_unaligned| SmError::Malformed("padded plaintext not block-aligned"))?;
+            let mut value = Vec::with_capacity(1_usize.saturating_add(cipher.as_bytes().len()));
+            value.push(PADDING_INDICATOR);
+            value.extend_from_slice(cipher.as_bytes());
+            refineid_ber::tlv(TAG_CRYPTOGRAM, &value)
+                .map_err(|_too_long| SmError::CommandTooLong)?
+        };
+
+        let protected_le = match le {
+            Some(le_byte) => refineid_ber::tlv(TAG_PROTECTED_LE, [le_byte])
+                .map_err(|_too_long| SmError::CommandTooLong)?,
+            None => Vec::new(),
+        };
+
+        let sm_header_bytes = [ApduClass::SecureMessaging.as_byte(), instruction, p1, p2];
+        let mut mac_input = Vec::new();
+        mac_input.extend_from_slice(self.ssc.as_bytes());
+        mac_input.extend_from_slice(&iso7816_4_pad(&sm_header_bytes));
+        mac_input.extend_from_slice(&cryptogram);
+        mac_input.extend_from_slice(&protected_le);
+        let mac_input = iso7816_4_pad(&mac_input);
+        let tag = aes256_cmac_truncated(self.k_mac.as_bytes(), &mac_input);
+        let mac_object = refineid_ber::tlv(TAG_MAC, tag.as_bytes())
+            .map_err(|_too_long| SmError::CommandTooLong)?;
+
+        let mut body = Vec::with_capacity(
+            cryptogram
+                .len()
+                .saturating_add(protected_le.len())
+                .saturating_add(mac_object.len()),
+        );
+        body.extend_from_slice(&cryptogram);
+        body.extend_from_slice(&protected_le);
+        body.extend_from_slice(&mac_object);
+        Ok((sm_header, body))
+    }
+
+    /// Verify and decrypt a secure-messaging response body, returning the
+    /// recovered data and the protected status word.
+    fn unwrap(&mut self, response: &[u8]) -> Result<(Vec<u8>, StatusWord), SmError<T::Error>> {
+        self.ssc.increment();
+
+        let mut cryptogram: Option<Vec<u8>> = None;
+        let mut status: Option<Vec<u8>> = None;
+        let mut mac: Option<Vec<u8>> = None;
+
+        for parsed in BerTlvIter::new(response) {
+            let tlv = parsed.map_err(|_ber| SmError::Malformed("response BER parse"))?;
+            let tag = tlv.tag();
+            if tag == u16::from(TAG_CRYPTOGRAM) {
+                cryptogram = Some(tlv.value().to_vec());
+            } else if tag == u16::from(TAG_PROTECTED_STATUS) {
+                status = Some(tlv.value().to_vec());
+            } else if tag == u16::from(TAG_MAC) {
+                mac = Some(tlv.value().to_vec());
+            }
+        }
+
+        let status = status.ok_or(SmError::Malformed("no protected status object"))?;
+        let mac = mac.ok_or(SmError::Malformed("no authentication object"))?;
+        let status_bytes: [u8; STATUS_LEN] = status
+            .as_slice()
+            .try_into()
+            .map_err(|_len| SmError::Malformed("status object wrong length"))?;
+        let mac_bytes: [u8; MAC_LEN] = mac
+            .as_slice()
+            .try_into()
+            .map_err(|_len| SmError::Malformed("authentication object wrong length"))?;
+
+        let mut mac_input = Vec::new();
+        mac_input.extend_from_slice(self.ssc.as_bytes());
+        if let Some(ref value) = cryptogram {
+            let object = refineid_ber::tlv(TAG_CRYPTOGRAM, value)
+                .map_err(|_too_long| SmError::Malformed("cryptogram too long to re-encode"))?;
+            mac_input.extend_from_slice(&object);
+        }
+        let status_object = refineid_ber::tlv(TAG_PROTECTED_STATUS, &status)
+            .map_err(|_too_long| SmError::Malformed("status too long to re-encode"))?;
+        mac_input.extend_from_slice(&status_object);
+        let mac_input = iso7816_4_pad(&mac_input);
+        let computed = aes256_cmac_truncated(self.k_mac.as_bytes(), &mac_input);
+        let authenticated = bool::from(computed.as_bytes().ct_eq(mac_bytes.as_slice()));
+        if !authenticated {
+            return Err(SmError::MacMismatch);
+        }
+
+        let body = match cryptogram {
+            Some(value) => {
+                let (indicator, cipher_bytes) = value
+                    .split_first()
+                    .ok_or(SmError::Malformed("cryptogram empty"))?;
+                let indicator_ok = *indicator == PADDING_INDICATOR;
+                if !indicator_ok {
+                    return Err(SmError::Malformed("cryptogram padding indicator"));
+                }
+                if !cipher_bytes.len().is_multiple_of(AES_BLOCK) {
+                    return Err(SmError::Malformed("cryptogram not whole blocks"));
+                }
+                let cipher = Ciphertext::<AesCbc>::new(cipher_bytes.to_vec());
+                let iv = aes256_ecb_encrypt_block(self.k_enc.as_bytes(), self.ssc.as_bytes());
+                let plain = aes256_cbc_decrypt_no_padding(self.k_enc.as_bytes(), &iv, &cipher)
+                    .map_err(|_unaligned| SmError::Malformed("cryptogram not whole blocks"))?;
+                iso7816_4_unpad(&plain)
+            }
+            None => Vec::new(),
+        };
+
+        let status_word = StatusWord::from_bytes(status_bytes[0], status_bytes[1]);
+        Ok((body, status_word))
+    }
+
+    /// Send a wrapped response outcome back through the unwrap path.
+    fn finish(&mut self, raw: TransportOutcome) -> Result<TransportOutcome, SmError<T::Error>> {
+        let response = match raw {
+            TransportOutcome::Response(response) => response,
+            other => return Ok(other),
+        };
+        // A bare response with no protected body is a transport-level
+        // refusal that passes through unchanged; any protected body must
+        // be unwrapped so the counter stays in step.
+        if response.body.is_empty() {
+            return Ok(TransportOutcome::Response(response));
+        }
+        let (body, sw) = self.unwrap(&response.body)?;
+        let [sw1, sw2] = sw.as_u16().to_be_bytes();
+        Ok(TransportOutcome::Response(ResponseApdu { body, sw1, sw2 }))
+    }
+}
+
+impl<T: CardTransport> CardTransport for SmTransport<T> {
+    type Error = SmError<T::Error>;
+
+    fn transmit(&mut self, command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
+        let (header, body) = self.wrap(command.as_bytes())?;
+        let wrapped = CommandApdu::case_4(header, &body, SM_LE_ANY)
+            .map_err(|_too_long| SmError::CommandTooLong)?;
+        let raw = self.inner.transmit(&wrapped).map_err(SmError::Transport)?;
+        self.finish(raw)
+    }
+
+    fn transmit_credential(
+        &mut self,
+        command: CredentialCommand,
+    ) -> Result<TransportOutcome, Self::Error> {
+        let wrapped = command.expose_wire(|plain| {
+            let (header, body) = self.wrap(plain)?;
+            CommandApdu::case_4(header, &body, SM_LE_ANY)
+                .map_err(|_too_long| SmError::CommandTooLong)
+        })?;
+        let mut wire = wrapped.as_bytes().to_vec();
+        let wrapped_credential =
+            CredentialCommand::from_wire(&mut wire).map_err(|_too_long| SmError::CommandTooLong)?;
+        let raw = self
+            .inner
+            .transmit_credential(wrapped_credential)
+            .map_err(SmError::Transport)?;
+        self.finish(raw)
+    }
+}
+
+/// ISO 7816-4 padding: append the marker, then filler to the next block
+/// boundary. Padding is never empty.
+fn iso7816_4_pad(data: &[u8]) -> Vec<u8> {
+    let full_blocks = data.len().div_euclid(AES_BLOCK);
+    let capacity = full_blocks.saturating_add(1).saturating_mul(AES_BLOCK);
+    let mut out = Vec::with_capacity(capacity);
+    out.extend_from_slice(data);
+    out.push(PAD_MARKER);
+    while !out.len().is_multiple_of(AES_BLOCK) {
+        out.push(PAD_FILLER);
+    }
+    out
+}
+
+/// Inverse of [`iso7816_4_pad`]: strip trailing filler and the marker.
+/// A malformed padding leaves the input unchanged.
+fn iso7816_4_unpad(data: &[u8]) -> Vec<u8> {
+    let trailing_filler = data
+        .iter()
+        .rev()
+        .take_while(|&&byte| byte == PAD_FILLER)
+        .count();
+    let Some(from_end) = trailing_filler.checked_add(1) else {
+        return data.to_vec();
+    };
+    let Some(marker_pos) = data.len().checked_sub(from_end) else {
+        return data.to_vec();
+    };
+    match data.get(marker_pos) {
+        Some(&PAD_MARKER) => data
+            .get(..marker_pos)
+            .map_or_else(|| data.to_vec(), <[u8]>::to_vec),
+        _ => data.to_vec(),
+    }
+}
+
+/// Decode a short-form APDU into its data field and optional
+/// expected-length byte. `None` when the length does not match a
+/// short-form case.
+fn decode_short_apdu(apdu: &[u8]) -> Option<(&[u8], Option<u8>)> {
+    let case_1_len = HEADER_LEN;
+    let case_2_len = HEADER_LEN + 1;
+    if apdu.len() == case_1_len {
+        return Some((&[], None));
+    }
+    if apdu.len() == case_2_len {
+        return apdu.get(HEADER_LEN).map(|&le| (&[][..], Some(le)));
+    }
+    let lc = usize::from(*apdu.get(HEADER_LEN)?);
+    let body_start = HEADER_LEN + 1;
+    let body_end = body_start.checked_add(lc)?;
+    let data = apdu.get(body_start..body_end)?;
+    if apdu.len() == body_end {
+        Some((data, None))
+    } else if apdu.len() == body_end.checked_add(1)? {
+        let le = *apdu.get(body_end)?;
+        Some((data, Some(le)))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AES_BLOCK, Aes256Key, PaceSession, SmError, SmTransport, Ssc, TAG_CRYPTOGRAM, TAG_MAC,
+        TAG_PROTECTED_STATUS, aes256_cbc_encrypt_no_padding, aes256_cmac_truncated,
+        aes256_ecb_encrypt_block, decode_short_apdu, iso7816_4_pad, iso7816_4_unpad,
+    };
+    use refineid_apdu::{
+        ApduClass, CardTransport, CommandApdu, CommandHeader, CredentialCommand, ResponseApdu,
+        StatusWord, TransportOutcome,
+    };
+
+    /// Non-sentinel test encryption key filler.
+    const K_ENC_FILL: u8 = 0x42;
+    /// Non-sentinel test authentication key filler.
+    const K_MAC_FILL: u8 = 0x77;
+    /// Test key length in bytes.
+    const KEY_LEN: usize = 32;
+    /// A warning status word the card can return with a protected body.
+    const WARNING_SW: u16 = 0x6282;
+
+    /// Counter steps a full command-and-response exchange takes.
+    const EXCHANGE_STEPS: u32 = 2;
+    /// A parameter byte of zero.
+    const P_ZERO: u8 = 0x00;
+    /// READ BINARY instruction.
+    const READ_BINARY_INS: u8 = 0xB0;
+    /// SELECT instruction.
+    const SELECT_INS: u8 = 0xA4;
+    /// SELECT P1 for an EF under the current directory.
+    const SELECT_EF_P1: u8 = 0x02;
+    /// SELECT P2 requesting no response data.
+    const NO_RESPONSE_P2: u8 = 0x0C;
+    /// A two-byte read length.
+    const READ_LE_TWO: u8 = 0x02;
+    /// A synthetic file-identifier high byte.
+    const FID_HIGH: u8 = 0x50;
+    /// A synthetic file-identifier low byte.
+    const FID_LOW: u8 = 0x31;
+    /// Status-word length in bytes.
+    const SW_LEN: usize = 2;
+    /// A decrypted response payload.
+    const RESPONSE_PAYLOAD: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
+    /// A short decrypted response payload.
+    const SHORT_PAYLOAD: &[u8] = &[0xAA, 0xBB];
+    /// A command data field.
+    const COMMAND_DATA: &[u8] = &[0x01, 0x02];
+    /// A case-2 expected-length fixture.
+    const CASE2_LE: u8 = 0x10;
+    /// A synthetic data-carrying instruction.
+    const DATA_INS: u8 = 0x20;
+    /// The length octet for the case fixtures.
+    const CASE_LC: u8 = 0x04;
+    /// A data field for the case fixtures.
+    const CASE_DATA: &[u8] = &[0x01, 0x02, 0x03, 0x04];
+    /// Case-1 fixture APDU: header only.
+    const CASE1_APDU: &[u8] = &[P_ZERO, SELECT_INS, P_ZERO, P_ZERO];
+    /// Case-2 fixture APDU: header and expected length.
+    const CASE2_APDU: &[u8] = &[P_ZERO, READ_BINARY_INS, P_ZERO, P_ZERO, CASE2_LE];
+    /// Case-3 fixture APDU: header, length, and data.
+    const CASE3_APDU: &[u8] = &[
+        P_ZERO, DATA_INS, P_ZERO, P_ZERO, CASE_LC, 0x01, 0x02, 0x03, 0x04,
+    ];
+    /// Case-4 fixture APDU: header, length, data, and expected length.
+    const CASE4_APDU: &[u8] = &[
+        P_ZERO, DATA_INS, P_ZERO, P_ZERO, CASE_LC, 0x01, 0x02, 0x03, 0x04, P_ZERO,
+    ];
+    /// A SELECT-EF plain command for the class-check test.
+    const SELECT_EF_APDU: &[u8] = &[
+        P_ZERO,
+        SELECT_INS,
+        SELECT_EF_P1,
+        NO_RESPONSE_P2,
+        READ_LE_TWO,
+        FID_HIGH,
+        FID_LOW,
+    ];
+
+    fn read_binary_header() -> CommandHeader {
+        CommandHeader {
+            class: ApduClass::Plain,
+            instruction: READ_BINARY_INS,
+            p1: P_ZERO,
+            p2: P_ZERO,
+        }
+    }
+
+    fn session() -> PaceSession {
+        PaceSession {
+            k_enc: Aes256Key::from_bytes([K_ENC_FILL; KEY_LEN]).expect("non-sentinel key"),
+            k_mac: Aes256Key::from_bytes([K_MAC_FILL; KEY_LEN]).expect("non-sentinel key"),
+            ssc: Ssc::INITIAL,
+        }
+    }
+
+    /// A transport that hands back one prepared response.
+    struct FixedResponse {
+        response: Option<ResponseApdu>,
+    }
+
+    impl CardTransport for FixedResponse {
+        type Error = String;
+
+        fn transmit(&mut self, _command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
+            self.response
+                .take()
+                .map(TransportOutcome::Response)
+                .ok_or_else(|| "fixed response already consumed".to_owned())
+        }
+
+        fn transmit_credential(
+            &mut self,
+            _command: CredentialCommand,
+        ) -> Result<TransportOutcome, Self::Error> {
+            Err("no credential in this test".to_owned())
+        }
+    }
+
+    /// A transport that never answers; used to drive wrap and unwrap
+    /// directly.
+    struct Null;
+
+    impl CardTransport for Null {
+        type Error = String;
+
+        fn transmit(&mut self, _command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
+            Err("null transport".to_owned())
+        }
+
+        fn transmit_credential(
+            &mut self,
+            _command: CredentialCommand,
+        ) -> Result<TransportOutcome, Self::Error> {
+            Err("null transport".to_owned())
+        }
+    }
+
+    #[test]
+    fn padding_round_trips() {
+        let cases: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"abcdef",
+            b"0123456789abcdef",
+            b"0123456789abcdef0",
+        ];
+        for &case in cases {
+            let padded = iso7816_4_pad(case);
+            assert!(padded.len().is_multiple_of(AES_BLOCK));
+            let grew = padded.len() > case.len();
+            assert!(grew);
+            assert_eq!(iso7816_4_unpad(&padded), case.to_vec());
+        }
+    }
+
+    #[test]
+    fn decode_short_apdu_covers_every_case() {
+        assert_eq!(decode_short_apdu(CASE1_APDU), Some((&[][..], None)));
+        assert_eq!(
+            decode_short_apdu(CASE2_APDU),
+            Some((&[][..], Some(CASE2_LE)))
+        );
+        assert_eq!(decode_short_apdu(CASE3_APDU), Some((CASE_DATA, None)));
+        assert_eq!(
+            decode_short_apdu(CASE4_APDU),
+            Some((CASE_DATA, Some(P_ZERO)))
+        );
+    }
+
+    /// Build a card-side response for a body the terminal will decrypt,
+    /// mirroring the unwrap inverse: the counter is stepped, the body is
+    /// encrypted, and the objects are authenticated.
+    fn card_response(counter_steps: u32, payload: &[u8], sw: StatusWord) -> Vec<u8> {
+        let mut ssc = Ssc::INITIAL;
+        for _step in 0..counter_steps {
+            ssc.increment();
+        }
+        let k_enc = [K_ENC_FILL; KEY_LEN];
+        let k_mac = [K_MAC_FILL; KEY_LEN];
+        let padded = iso7816_4_pad(payload);
+        let iv = aes256_ecb_encrypt_block(&k_enc, ssc.as_bytes());
+        let cipher =
+            aes256_cbc_encrypt_no_padding(&k_enc, &iv, &padded).expect("padded payload is aligned");
+        let mut value = vec![super::PADDING_INDICATOR];
+        value.extend_from_slice(cipher.as_bytes());
+        let cryptogram = refineid_ber::tlv(TAG_CRYPTOGRAM, &value).expect("encodes");
+        let [sw1, sw2] = sw.as_u16().to_be_bytes();
+        let status = refineid_ber::tlv(TAG_PROTECTED_STATUS, [sw1, sw2]).expect("encodes");
+
+        let mut mac_input = Vec::new();
+        mac_input.extend_from_slice(ssc.as_bytes());
+        mac_input.extend_from_slice(&cryptogram);
+        mac_input.extend_from_slice(&status);
+        let mac_input = iso7816_4_pad(&mac_input);
+        let tag = aes256_cmac_truncated(&k_mac, &mac_input);
+        let mac_object = refineid_ber::tlv(TAG_MAC, tag.as_bytes()).expect("encodes");
+
+        let mut body = Vec::new();
+        body.extend_from_slice(&cryptogram);
+        body.extend_from_slice(&status);
+        body.extend_from_slice(&mac_object);
+        body
+    }
+
+    fn success_bytes() -> [u8; SW_LEN] {
+        StatusWord::Success.as_u16().to_be_bytes()
+    }
+
+    #[test]
+    fn wrap_sets_the_secure_messaging_class() {
+        let mut terminal = SmTransport::new(Null, session());
+        let (header, _body) = terminal.wrap(SELECT_EF_APDU).expect("wrap succeeds");
+        assert_eq!(header.class, ApduClass::SecureMessaging);
+        assert_eq!(header.instruction, SELECT_INS);
+    }
+
+    #[test]
+    fn round_trip_through_a_card_peer() {
+        // The terminal wraps a command (stepping its counter once), then
+        // the card responds (stepping the shared counter a second time).
+        let response_body = card_response(EXCHANGE_STEPS, RESPONSE_PAYLOAD, StatusWord::Success);
+        let [sw1, sw2] = success_bytes();
+        let mut terminal = SmTransport::new(
+            FixedResponse {
+                response: Some(ResponseApdu {
+                    body: response_body,
+                    sw1,
+                    sw2,
+                }),
+            },
+            session(),
+        );
+        let command =
+            CommandApdu::case_3(read_binary_header(), COMMAND_DATA).expect("command encodes");
+        let outcome = terminal.transmit(&command).expect("round trip succeeds");
+        let response = outcome.into_response().expect("real response");
+        assert!(response.is_ok());
+        assert_eq!(response.body.as_slice(), RESPONSE_PAYLOAD);
+    }
+
+    #[test]
+    fn protected_warning_body_is_still_unwrapped() {
+        let warning = StatusWord::from_u16(WARNING_SW);
+        let response_body = card_response(EXCHANGE_STEPS, SHORT_PAYLOAD, warning);
+        let [sw1, sw2] = WARNING_SW.to_be_bytes();
+        let mut terminal = SmTransport::new(
+            FixedResponse {
+                response: Some(ResponseApdu {
+                    body: response_body,
+                    sw1,
+                    sw2,
+                }),
+            },
+            session(),
+        );
+        let command = CommandApdu::case_2(read_binary_header(), READ_LE_TWO);
+        let outcome = terminal
+            .transmit(&command)
+            .expect("warning body is accepted");
+        let response = outcome.into_response().expect("real response");
+        assert_eq!(response.status_word(), warning);
+        assert_eq!(response.body.as_slice(), SHORT_PAYLOAD);
+    }
+
+    #[test]
+    fn tampered_authentication_tag_is_rejected() {
+        let mut response_body = card_response(EXCHANGE_STEPS, COMMAND_DATA, StatusWord::Success);
+        // Flip the last byte, which lands in the authentication object.
+        let last = response_body.len() - 1;
+        response_body[last] ^= u8::MAX;
+        let [sw1, sw2] = success_bytes();
+        let mut terminal = SmTransport::new(
+            FixedResponse {
+                response: Some(ResponseApdu {
+                    body: response_body,
+                    sw1,
+                    sw2,
+                }),
+            },
+            session(),
+        );
+        let command = CommandApdu::case_2(read_binary_header(), READ_LE_TWO);
+        let error = terminal
+            .transmit(&command)
+            .expect_err("a tampered tag breaks the channel");
+        assert!(matches!(error, SmError::MacMismatch));
+    }
+}
