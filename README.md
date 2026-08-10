@@ -15,8 +15,10 @@ crates stay transport-agnostic and country-profile-neutral.
 - `crates/apdu` (`refineid-apdu`) -- typed ISO 7816-4 commands, status
   words, and the card transport port, with separate replay-safe and
   credential command ownership paths.
-- `crates/auth` (`refineid-auth`) -- PIN role types and, in a later slice,
-  the PIN verification, change, and unblock chains.
+- `crates/auth` (`refineid-auth`) -- PIN role types, VERIFY PIN1/PIN2
+  over the credential-command path, the counter-safe status probe, and
+  the retry-risk policy; the change and unblock chains follow in a later
+  slice.
 - `crates/ber` (`refineid-ber`) -- minimal BER-TLV encoder and decoder
   with a typed tag layer.
 - `crates/pace` (`refineid-pace`) -- Card Access Number input type, the
@@ -25,8 +27,8 @@ crates stay transport-agnostic and country-profile-neutral.
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
 
-Planned slices add the PIN verification chains into `refineid-auth` and
-`refineid-sign` (card-side signature operations).
+Planned slices add the PIN change and unblock chains into `refineid-auth`
+and `refineid-sign` (card-side signature operations).
 
 ## Security posture
 

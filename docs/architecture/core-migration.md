@@ -114,6 +114,25 @@ behaviour are validated on hardware before being described as working,
 per the admission checklist. PACE consumes no retry counter, so it is
 admitted without a retry-consuming hardware gate.
 
+The fifth slice admits PIN verification in `refineid-auth`:
+
+- `verify_pin1` and `verify_pin2` consume a validated `Pin1` or `Pin2`
+  through a crate-private path, pad it to the stored length, and ship it
+  only as a credential command; the slot is fixed by the argument type,
+  so a PIN2 can never reach the PIN1 slot;
+- the counter-safe status probe reads the retry state without spending a
+  counter, on the plain path with no credential;
+- the typed outcomes and status-word classifiers, and the retry-risk
+  policy that maps the live counter to the safety floors different
+  surfaces stop at.
+
+VERIFY is retry-consuming: the classifiers, the credential-command wire,
+and the retry-risk policy are covered by scripted-transport and unit
+tests, but no path is described as working against a real card until it
+is observed on hardware with the retry counter checked before and after,
+and PIN2 and card-mutating tests stay off automation, per the admission
+checklist and the Apple release plan.
+
 ## Quarantined until redesigned
 
 The admitted APDU slice replaces the quarantined designs from the private
@@ -125,7 +144,9 @@ generic command types do not enter the public tree in any form.
 Still outside the public tree:
 
 - transport adapters until their custody and fault paths pass review;
-- authentication and signing command chains;
+- the PIN change and PUK-unblock command chains, which are
+  card-mutating and need the separately supplied credential role types;
+- the signing command chains;
 - automatic retry paths of any kind around credential commands; and
 - the legacy PIN cache.
 

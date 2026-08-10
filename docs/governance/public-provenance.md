@@ -43,6 +43,16 @@ deployment details.
   Part 11, RFC 5639, and the NIST AES and CMAC known-answer vectors.
   Secret, personal-information, protocol, and dependency scans were
   performed for this slice.
+- **PIN verification.** Publication under Apache-2.0 directed on
+  2026-08-10 for the `refineid-auth` verification slice: the VERIFY
+  PIN1 and PIN2 chains over the credential-command path, the
+  counter-safe status probe, the status-word classifiers, and the
+  retry-risk policy. Reconstructed against the private development
+  tree's proven wire shapes; the change and unblock chains stayed
+  behind. Constants are traced to the DVV FINEID specifications (S1
+  section 3.5) and ISO/IEC 7816-4 section 7.5.6. Secret,
+  personal-information, protocol, and dependency scans were performed
+  for this slice.
 
 Before a later slice is admitted, its review must record:
 

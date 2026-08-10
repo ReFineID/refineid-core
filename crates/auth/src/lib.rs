@@ -12,14 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Reviewed FINEID PIN role types.
+//! Reviewed FINEID PIN role types and verification.
 //!
 //! Values crossing a trust boundary are deconstructed, validated once, and
 //! reconstructed as types whose constructors preserve their invariants.
+//! The verification chain consumes a validated PIN through a
+//! crate-private path and ships it as a credential command, consumed
+//! exactly once; the retry-risk policy maps the live counter to the
+//! safety floors different surfaces stop at.
 
 pub mod credentials;
+pub mod retry_risk;
+pub mod verify;
 
 pub use credentials::{CredentialInputError, CredentialRole, Pin1, Pin2, UnvalidatedSecret};
+pub use retry_risk::{
+    PinRetryRisk, pin1_status_permits_consumer_authentication, pin1_status_permits_reusable_cache,
+};
+pub use verify::{
+    AuthError, PIN_STORED_LENGTH, PIN1_REFERENCE, PIN2_REFERENCE, PinOps, PinSlot, PinStatus,
+    VerifyOutcome, classify_pin_status_sw, classify_verify_sw,
+};
 
 #[cfg(test)]
 mod public_contract_tests {

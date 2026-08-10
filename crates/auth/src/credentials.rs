@@ -152,7 +152,6 @@ impl SecretDigits {
         self.length as usize
     }
 
-    #[cfg(test)]
     fn secret_bytes(&self) -> &[u8] {
         &self.bytes[..self.digit_count()]
     }
@@ -182,6 +181,15 @@ impl Pin1 {
     #[must_use]
     pub const fn digit_count(&self) -> usize {
         self.0.digit_count()
+    }
+
+    /// Borrow the validated digits for the verification command builder.
+    ///
+    /// This is the crate-private path the PIN operations consume PIN1
+    /// through: the digits never leave this crate as raw bytes, and no
+    /// public `as_bytes` accessor exists.
+    pub(crate) fn digits(&self) -> &[u8] {
+        self.0.secret_bytes()
     }
 }
 
@@ -215,6 +223,15 @@ impl Pin2 {
     #[must_use]
     pub const fn digit_count(&self) -> usize {
         self.0.digit_count()
+    }
+
+    /// Borrow the validated digits for the verification command builder.
+    ///
+    /// This is the crate-private path the PIN operations consume PIN2
+    /// through: the digits never leave this crate as raw bytes, and no
+    /// public `as_bytes` accessor exists.
+    pub(crate) fn digits(&self) -> &[u8] {
+        self.0.secret_bytes()
     }
 }
 

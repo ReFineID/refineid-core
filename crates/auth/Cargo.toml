@@ -16,6 +16,7 @@ doctest = false
 workspace = true
 
 [dependencies]
+refineid-apdu.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
