@@ -211,12 +211,22 @@ impl FileId {
 
     /// File identifier of the Master File, reserved by ISO 7816-4
     /// section 8.2.1.1.
-    pub const MF: Self = Self([0x3F, 0x00]);
+    pub const MF: Self = Self::from_u16(0x3F00);
 
     /// Wrap the two wire bytes.
     #[must_use]
     pub const fn new(bytes: [u8; Self::LENGTH]) -> Self {
         Self(bytes)
+    }
+
+    /// Build a file identifier from the single 16-bit value it names, so a
+    /// well-known identifier reads as the number the specification prints
+    /// (for example the EF.4331 certificate file) rather than a pair of
+    /// wire bytes. The value is stored big-endian, as it travels on the
+    /// wire.
+    #[must_use]
+    pub const fn from_u16(id: u16) -> Self {
+        Self(id.to_be_bytes())
     }
 
     /// Borrow the two wire bytes.
@@ -230,9 +240,9 @@ impl FileId {
 mod tests {
     use super::{Aid, AidError, FileId, Sfi, SfiError};
 
-    /// Synthetic seven-byte AID for shape tests; the value has no
-    /// protocol meaning.
-    const TEST_AID: &[u8] = &[0xA0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+    /// Synthetic seven-byte AID for shape tests; the ASCII value has no
+    /// protocol meaning, only a valid length.
+    const TEST_AID: &[u8] = b"testaid";
     /// One byte below the minimum AID length.
     const TOO_SHORT_AID_LEN: usize = Aid::MIN_LENGTH - 1;
     /// One byte above the maximum AID length.
@@ -246,7 +256,9 @@ mod tests {
         assert_eq!(aid.len(), TEST_AID.len());
         assert!(!aid.is_empty());
         assert_eq!(aid.as_bytes(), TEST_AID);
-        assert_eq!(format!("{aid}"), "A0:11:22:33:44:55:66");
+        // The Display form is the AID bytes as colon-separated hex; here
+        // the ASCII fixture `testaid` in its byte spelling.
+        assert_eq!(format!("{aid}"), "74:65:73:74:61:69:64");
 
         assert!(Aid::new(vec![FILLER; Aid::MIN_LENGTH]).is_ok());
         assert!(Aid::new(vec![FILLER; Aid::MAX_LENGTH]).is_ok());

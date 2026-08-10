@@ -428,32 +428,37 @@ mod tests {
     const FID_LOW: u8 = 0x31;
     /// Status-word length in bytes.
     const SW_LEN: usize = 2;
-    /// A decrypted response payload.
-    const RESPONSE_PAYLOAD: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
-    /// A short decrypted response payload.
-    const SHORT_PAYLOAD: &[u8] = &[0xAA, 0xBB];
-    /// A command data field.
-    const COMMAND_DATA: &[u8] = &[0x01, 0x02];
+    /// A decrypted response payload; the ASCII value is synthetic.
+    const RESPONSE_PAYLOAD: &[u8] = b"DEAD";
+    /// A short decrypted response payload; the ASCII value is synthetic.
+    const SHORT_PAYLOAD: &[u8] = b"hi";
+    /// A command data field; the ASCII value is synthetic.
+    const COMMAND_DATA: &[u8] = b"go";
     /// A case-2 expected-length fixture.
     const CASE2_LE: u8 = 0x10;
     /// A synthetic data-carrying instruction.
     const DATA_INS: u8 = 0x20;
-    /// The length octet for the case fixtures.
+    /// The length octet for the case fixtures: [`CASE_DATA`]'s length.
     const CASE_LC: u8 = 0x04;
-    /// A data field for the case fixtures.
-    const CASE_DATA: &[u8] = &[0x01, 0x02, 0x03, 0x04];
+    /// A data field for the case fixtures; the ASCII value is synthetic.
+    const CASE_DATA: &[u8] = b"data";
     /// Case-1 fixture APDU: header only.
     const CASE1_APDU: &[u8] = &[P_ZERO, SELECT_INS, P_ZERO, P_ZERO];
     /// Case-2 fixture APDU: header and expected length.
     const CASE2_APDU: &[u8] = &[P_ZERO, READ_BINARY_INS, P_ZERO, P_ZERO, CASE2_LE];
-    /// Case-3 fixture APDU: header, length, and data.
-    const CASE3_APDU: &[u8] = &[
-        P_ZERO, DATA_INS, P_ZERO, P_ZERO, CASE_LC, 0x01, 0x02, 0x03, 0x04,
-    ];
-    /// Case-4 fixture APDU: header, length, data, and expected length.
-    const CASE4_APDU: &[u8] = &[
-        P_ZERO, DATA_INS, P_ZERO, P_ZERO, CASE_LC, 0x01, 0x02, 0x03, 0x04, P_ZERO,
-    ];
+    /// Case-3 fixture APDU: header, length, and the data field.
+    fn case3_apdu() -> Vec<u8> {
+        let mut wire = vec![P_ZERO, DATA_INS, P_ZERO, P_ZERO, CASE_LC];
+        wire.extend_from_slice(CASE_DATA);
+        wire
+    }
+    /// Case-4 fixture APDU: the case-3 body followed by the expected
+    /// length.
+    fn case4_apdu() -> Vec<u8> {
+        let mut wire = case3_apdu();
+        wire.push(P_ZERO);
+        wire
+    }
     /// A SELECT-EF plain command for the class-check test.
     const SELECT_EF_APDU: &[u8] = &[
         P_ZERO,
@@ -549,9 +554,9 @@ mod tests {
             decode_short_apdu(CASE2_APDU),
             Some((&[][..], Some(CASE2_LE)))
         );
-        assert_eq!(decode_short_apdu(CASE3_APDU), Some((CASE_DATA, None)));
+        assert_eq!(decode_short_apdu(&case3_apdu()), Some((CASE_DATA, None)));
         assert_eq!(
-            decode_short_apdu(CASE4_APDU),
+            decode_short_apdu(&case4_apdu()),
             Some((CASE_DATA, Some(P_ZERO)))
         );
     }

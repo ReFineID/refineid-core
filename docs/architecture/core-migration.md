@@ -28,11 +28,24 @@ new type-state transition.
 Anonymous domain numbers are forbidden in production and ordinary tests.
 Changing a hexadecimal value to decimal does not name its meaning.
 
-Raw wire values have only two legitimate homes:
+Hand-typed hexadecimal arrays are not permitted anywhere in the core, not
+even in tests. Every byte of protocol structure is a named constant, and a
+wire buffer -- a command, an expected fixture -- is assembled from those
+names, so a reader (human or machine) sees the meaning rather than a row of
+opaque bytes. An expected-wire fixture is built from the same named header,
+tag, and length constants the serialiser uses; a synthetic test payload is
+an ASCII byte string, and a well-known identifier is the single value the
+specification prints (for example a file identifier built from its 16-bit
+number, or an application identifier whose ASCII name is written as
+character literals).
+
+Raw wire values then have only two legitimate homes:
 
 - the initializer or discriminant of a truthful named protocol constant; or
-- an independently audited exact-wire or known-answer fixture whose purpose is
-  to lock externally specified bytes.
+- a single named constant holding an opaque, externally specified block whose
+  bytes carry no separable per-byte meaning -- an independently audited
+  known-answer vector, a registered application-provider identifier, or a
+  DER object identifier -- carrying a citation to the source it locks.
 
 The AST-based `xtask` walks integer and floating-point literals, numeric byte
 escapes, radix spellings embedded in strings or documentation, patterns,

@@ -105,20 +105,53 @@ impl GeneralAuthenticate {
 
 #[cfg(test)]
 mod tests {
-    use super::{GeneralAuthenticate, MseSetAt};
-    use refineid_apdu::CommandDataError;
+    use super::{
+        GA_INS, GA_LE_ANY, GA_P1, GA_P2, GeneralAuthenticate, MSE_INS, MSE_P1_SET_AT,
+        MSE_P2_AUTH_TEMPLATE, MseSetAt,
+    };
+    use refineid_apdu::{ApduClass, CommandDataError};
 
-    /// A synthetic MSE data field.
-    const MSE_DATA: &[u8] = &[0x80, 0x01, 0xAA];
-    /// Expected MSE wire: header, Lc, then the data.
-    const EXPECTED_MSE_WIRE: &[u8] = &[0x00, 0x22, 0xC1, 0xA4, 0x03, 0x80, 0x01, 0xAA];
+    /// Tag of a synthetic control-reference data object in the MSE data
+    /// field: the cryptographic-mechanism reference (BER-TLV tag `80`).
+    const MSE_CRDO_TAG: u8 = 0x80;
+    /// Its one-byte value length.
+    const MSE_CRDO_LEN: u8 = 0x01;
+    /// Its synthetic mechanism-reference value; no protocol meaning.
+    const MSE_CRDO_VALUE: u8 = 0xAA;
+    /// A synthetic MSE data field: one control-reference data object.
+    const MSE_DATA: &[u8] = &[MSE_CRDO_TAG, MSE_CRDO_LEN, MSE_CRDO_VALUE];
 
-    /// A synthetic GENERAL AUTHENTICATE payload.
-    const GA_PAYLOAD: &[u8] = &[0x7C, 0x00];
-    /// Expected chained GENERAL AUTHENTICATE wire.
-    const EXPECTED_GA_CHAINED_WIRE: &[u8] = &[0x10, 0x86, 0x00, 0x00, 0x02, 0x7C, 0x00, 0x00];
-    /// Expected final GENERAL AUTHENTICATE wire.
-    const EXPECTED_GA_FINAL_WIRE: &[u8] = &[0x00, 0x86, 0x00, 0x00, 0x02, 0x7C, 0x00, 0x00];
+    /// Tag of the dynamic-authentication-data template that wraps a
+    /// GENERAL AUTHENTICATE payload (BER-TLV tag `7C`).
+    const GA_TEMPLATE_TAG: u8 = 0x7C;
+    /// The template's length byte for an empty body.
+    const GA_EMPTY_LEN: u8 = 0x00;
+    /// A synthetic GENERAL AUTHENTICATE payload: the empty template.
+    const GA_PAYLOAD: &[u8] = &[GA_TEMPLATE_TAG, GA_EMPTY_LEN];
+
+    /// Expected MSE:Set AT wire, assembled from the named header bytes:
+    /// header, Lc, then the data field.
+    fn expected_mse_wire() -> Vec<u8> {
+        let mut wire = vec![
+            ApduClass::Plain.as_byte(),
+            MSE_INS,
+            MSE_P1_SET_AT,
+            MSE_P2_AUTH_TEMPLATE,
+        ];
+        wire.push(u8::try_from(MSE_DATA.len()).expect("fixture data fits the short form"));
+        wire.extend_from_slice(MSE_DATA);
+        wire
+    }
+
+    /// Expected GENERAL AUTHENTICATE wire for `class`: header, Lc, the
+    /// payload, then the expected-length byte.
+    fn expected_ga_wire(class: ApduClass) -> Vec<u8> {
+        let mut wire = vec![class.as_byte(), GA_INS, GA_P1, GA_P2];
+        wire.push(u8::try_from(GA_PAYLOAD.len()).expect("fixture payload fits the short form"));
+        wire.extend_from_slice(GA_PAYLOAD);
+        wire.push(GA_LE_ANY);
+        wire
+    }
 
     #[test]
     fn mse_set_at_matches_the_specified_wire() -> Result<(), CommandDataError> {
@@ -126,7 +159,7 @@ mod tests {
             data: MSE_DATA.to_vec(),
         }
         .into_apdu()?;
-        assert_eq!(apdu.as_bytes(), EXPECTED_MSE_WIRE);
+        assert_eq!(apdu.as_bytes(), expected_mse_wire().as_slice());
         Ok(())
     }
 
@@ -137,14 +170,20 @@ mod tests {
             payload: GA_PAYLOAD.to_vec(),
         }
         .into_apdu()?;
-        assert_eq!(chained.as_bytes(), EXPECTED_GA_CHAINED_WIRE);
+        assert_eq!(
+            chained.as_bytes(),
+            expected_ga_wire(ApduClass::ChainedFirst).as_slice()
+        );
 
         let final_round = GeneralAuthenticate {
             chain: false,
             payload: GA_PAYLOAD.to_vec(),
         }
         .into_apdu()?;
-        assert_eq!(final_round.as_bytes(), EXPECTED_GA_FINAL_WIRE);
+        assert_eq!(
+            final_round.as_bytes(),
+            expected_ga_wire(ApduClass::Plain).as_slice()
+        );
         Ok(())
     }
 }

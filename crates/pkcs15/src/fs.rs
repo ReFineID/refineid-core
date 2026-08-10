@@ -31,10 +31,12 @@ use refineid_apdu::{
 };
 
 /// The PKCS#15 application identifier the FINEID card publishes per
-/// FINEID S4-2 section 3.1: a five-byte international prefix followed by
-/// ASCII `PKCS-15`.
+/// FINEID S4-2 section 3.1. It is the registered application provider
+/// identifier -- the opaque five-byte RID `A0 00 00 00 63` that ISO
+/// 7816-5 assigns to PKCS#15 -- followed by the ASCII application name
+/// `PKCS-15`, written below as character literals.
 pub const PKCS15_AID: &[u8] = &[
-    0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35,
+    0xA0, 0x00, 0x00, 0x00, 0x63, b'P', b'K', b'C', b'S', b'-', b'1', b'5',
 ];
 
 // Compile-time guard: an accidental edit taking the AID outside the ISO
@@ -43,24 +45,24 @@ const _PKCS15_AID_LENGTH_GUARD: () =
     assert!(PKCS15_AID.len() >= Aid::MIN_LENGTH && PKCS15_AID.len() <= Aid::MAX_LENGTH);
 
 /// EF.4331, the authentication certificate, per FINEID S4-2 section 3.
-pub const EF_AUTH_CERT_FID: FileId = FileId::new([0x43, 0x31]);
+pub const EF_AUTH_CERT_FID: FileId = FileId::from_u16(0x4331);
 /// EF.4332, the qualified-signature certificate.
-pub const EF_SIGN_CERT_FID: FileId = FileId::new([0x43, 0x32]);
+pub const EF_SIGN_CERT_FID: FileId = FileId::from_u16(0x4332);
 /// EF.4333, the second authentication slot on dual-algorithm cards.
-pub const EF_AUTH_CERT_ALT_FID: FileId = FileId::new([0x43, 0x33]);
+pub const EF_AUTH_CERT_ALT_FID: FileId = FileId::from_u16(0x4333);
 /// EF.4334, the on-card root CA certificate; lives directly under the
 /// MF.
-pub const EF_ROOT_CA_FID: FileId = FileId::new([0x43, 0x34]);
+pub const EF_ROOT_CA_FID: FileId = FileId::from_u16(0x4334);
 /// EF.4335, the second qualified-signature slot.
-pub const EF_SIGN_CERT_ALT_FID: FileId = FileId::new([0x43, 0x35]);
+pub const EF_SIGN_CERT_ALT_FID: FileId = FileId::from_u16(0x4335);
 /// EF.4336, the on-card issuing intermediate CA certificate; lives
 /// directly under the MF.
-pub const EF_ISSUING_CA_ECC_FID: FileId = FileId::new([0x43, 0x36]);
+pub const EF_ISSUING_CA_ECC_FID: FileId = FileId::from_u16(0x4336);
 /// PKCS#15 EF.TokenInfo: card label, manufacturer, and serial.
-pub const EF_TOKEN_INFO_FID: FileId = FileId::new([0x50, 0x32]);
+pub const EF_TOKEN_INFO_FID: FileId = FileId::from_u16(0x5032);
 /// The DF holding the signature and alternate certificate slots, per
 /// FINEID S4-2 section 3.
-pub const DF_CERT_DIRECTORY_FID: FileId = FileId::new([0x50, 0x16]);
+pub const DF_CERT_DIRECTORY_FID: FileId = FileId::from_u16(0x5016);
 
 /// Where a slot lives in the card's file tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

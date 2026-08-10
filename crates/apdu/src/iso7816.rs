@@ -492,42 +492,86 @@ mod tests {
     use crate::command::{APDU_HEADER_LEN, ApduClass, LC_LEN, LE_LEN};
     use crate::primitives::{Aid, FileId, Sfi};
 
-    /// Synthetic seven-byte AID for wire tests; no protocol meaning.
-    const TEST_AID: &[u8] = &[0xA0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
-    /// Independently stated expected wire for SELECT by AID without
-    /// response data over [`TEST_AID`], per FINEID S1 v4.2 section 3.1:
-    /// header, Lc, then the AID.
-    const EXPECTED_SELECT_AID_WIRE: &[u8] = &[
-        0x00, 0xA4, 0x04, 0x0C, 0x07, 0xA0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
-    ];
+    /// Synthetic seven-byte AID for wire tests; the ASCII value has no
+    /// protocol meaning, only a valid length.
+    const TEST_AID: &[u8] = b"testaid";
+    /// Expected wire for SELECT by AID without response data over
+    /// [`TEST_AID`], assembled from the builder's named header bytes:
+    /// header, Lc, then the AID (FINEID S1 v4.2 section 3.1).
+    fn expected_select_aid_wire() -> Vec<u8> {
+        let mut wire = vec![
+            SelectByAidNoFci::CLA,
+            SelectByAidNoFci::INS,
+            SelectByAidNoFci::P1,
+            SelectByAidNoFci::P2,
+        ];
+        wire.push(u8::try_from(TEST_AID.len()).expect("fixture AID fits the short form"));
+        wire.extend_from_slice(TEST_AID);
+        wire
+    }
 
     /// Synthetic file identifier for wire tests.
-    const TEST_FID: FileId = FileId::new([0x50, 0x31]);
-    /// Independently stated expected wire for SELECT EF without response
-    /// data over [`TEST_FID`]: header, Lc, then the identifier.
-    const EXPECTED_SELECT_EF_WIRE: &[u8] = &[0x00, 0xA4, 0x02, 0x0C, 0x02, 0x50, 0x31];
+    const TEST_FID: FileId = FileId::from_u16(0x5031);
+    /// Expected wire for SELECT EF without response data over
+    /// [`TEST_FID`]: header, Lc, then the identifier.
+    fn expected_select_ef_wire() -> Vec<u8> {
+        let mut wire = vec![
+            SelectEfNoFci::CLA,
+            SelectEfNoFci::INS,
+            SelectEfNoFci::P1,
+            SelectEfNoFci::P2,
+            SelectEfNoFci::LC,
+        ];
+        wire.extend_from_slice(TEST_FID.as_bytes());
+        wire
+    }
 
     /// Le fixture for GET RESPONSE and READ BINARY wire tests.
     const TEST_LE: u8 = 0x80;
-    /// Independently stated expected wire for a plain GET RESPONSE with
-    /// [`TEST_LE`], per FINEID S1 v4.2 section 3.3.2.
-    const EXPECTED_GET_RESPONSE_WIRE: &[u8] = &[0x00, 0xC0, 0x00, 0x00, 0x80];
+    /// Expected wire for a plain GET RESPONSE with [`TEST_LE`] (FINEID S1
+    /// v4.2 section 3.3.2).
+    fn expected_get_response_wire() -> Vec<u8> {
+        vec![
+            ApduClass::Plain.as_byte(),
+            GetResponse::INS,
+            GetResponse::P1,
+            GetResponse::P2,
+            TEST_LE,
+        ]
+    }
 
     /// Direct offset fixture for READ BINARY wire tests.
     const TEST_OFFSET: u16 = 0x1234;
-    /// Independently stated expected wire for a plain direct-offset READ
-    /// BINARY at [`TEST_OFFSET`] with [`TEST_LE`], per FINEID S1 v4.2
-    /// section 3.4.2.
-    const EXPECTED_READ_BINARY_WIRE: &[u8] = &[0x00, 0xB0, 0x12, 0x34, 0x80];
+    /// Expected wire for a plain direct-offset READ BINARY at
+    /// [`TEST_OFFSET`] with [`TEST_LE`] (FINEID S1 v4.2 section 3.4.2):
+    /// the offset rides big-endian in P1-P2.
+    fn expected_read_binary_wire() -> Vec<u8> {
+        let [offset_high, offset_low] = TEST_OFFSET.to_be_bytes();
+        vec![
+            ApduClass::Plain.as_byte(),
+            ReadBinary::INS,
+            offset_high,
+            offset_low,
+            TEST_LE,
+        ]
+    }
 
     /// SFI fixture for the SFI-form READ BINARY test.
     const TEST_SFI: u8 = 5;
     /// EF-internal offset fixture for the SFI-form READ BINARY test.
     const TEST_SFI_OFFSET: u8 = 16;
-    /// Independently stated expected wire for a plain SFI-form READ
-    /// BINARY of [`TEST_SFI`] at [`TEST_SFI_OFFSET`] with [`TEST_LE`]:
-    /// P1 carries the selection flag with the identifier.
-    const EXPECTED_READ_BINARY_SFI_WIRE: &[u8] = &[0x00, 0xB0, 0x85, 0x10, 0x80];
+    /// Expected wire for a plain SFI-form READ BINARY of [`TEST_SFI`] at
+    /// [`TEST_SFI_OFFSET`] with [`TEST_LE`]: P1 carries the SFI-selection
+    /// flag over the identifier.
+    fn expected_read_binary_sfi_wire() -> Vec<u8> {
+        vec![
+            ApduClass::Plain.as_byte(),
+            ReadBinary::INS,
+            SFI_MODE_BIT | TEST_SFI,
+            TEST_SFI_OFFSET,
+            TEST_LE,
+        ]
+    }
 
     /// P1 mode bit distinguishing SFI form from direct form.
     const SFI_MODE_BIT: u8 = 0x80;
@@ -545,7 +589,7 @@ mod tests {
     #[test]
     fn select_by_aid_matches_the_specified_wire() {
         let apdu = SelectByAidNoFci { aid: test_aid() }.into_apdu();
-        assert_eq!(apdu.as_bytes(), EXPECTED_SELECT_AID_WIRE);
+        assert_eq!(apdu.as_bytes(), expected_select_aid_wire().as_slice());
         assert!(
             apdu.corrected_wrong_le(CORRECTED_LE).is_none(),
             "a case-3 SELECT never opts into wrong-Le correction"
@@ -555,7 +599,7 @@ mod tests {
     #[test]
     fn select_ef_matches_the_specified_wire() {
         let apdu = SelectEfNoFci { fid: TEST_FID }.into_apdu();
-        assert_eq!(apdu.as_bytes(), EXPECTED_SELECT_EF_WIRE);
+        assert_eq!(apdu.as_bytes(), expected_select_ef_wire().as_slice());
     }
 
     #[test]
@@ -565,7 +609,7 @@ mod tests {
             le: TEST_LE,
         }
         .into_apdu();
-        assert_eq!(apdu.as_bytes(), EXPECTED_GET_RESPONSE_WIRE);
+        assert_eq!(apdu.as_bytes(), expected_get_response_wire().as_slice());
 
         let corrected = apdu
             .corrected_wrong_le(CORRECTED_LE)
@@ -587,7 +631,7 @@ mod tests {
             le: TEST_LE,
         }
         .into_apdu();
-        assert_eq!(apdu.as_bytes(), EXPECTED_READ_BINARY_WIRE);
+        assert_eq!(apdu.as_bytes(), expected_read_binary_wire().as_slice());
         assert_eq!(ReadBinaryOffset::Direct(offset).as_p1() & SFI_MODE_BIT, 0);
         assert!(apdu.corrected_wrong_le(CORRECTED_LE).is_some());
     }
@@ -605,7 +649,7 @@ mod tests {
             le: TEST_LE,
         }
         .into_apdu();
-        assert_eq!(apdu.as_bytes(), EXPECTED_READ_BINARY_SFI_WIRE);
+        assert_eq!(apdu.as_bytes(), expected_read_binary_sfi_wire().as_slice());
         assert_eq!(offset.as_p1() & SFI_MODE_BIT, SFI_MODE_BIT);
     }
 
