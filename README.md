@@ -24,7 +24,8 @@ signature operations).
 ## Security posture
 
 - PIN1 and PIN2 are distinct non-clonable types.
-- PIN2 is never cached.
+- PIN2 retention is bounded to a one-minute convenience window measured from
+  the last card-confirmed use; the window never extends to PIN management.
 - Credential and CAN input are accepted only through explicitly unvalidated,
   zeroize-on-drop boundaries and reconstructed into validated role types.
 - Anonymous protocol numbers are rejected. Hexadecimal wire values may appear

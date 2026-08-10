@@ -4,15 +4,28 @@ This is the target contract for PIN-bearing code. The current public slice
 implements only the refined input types; it does not yet cache a PIN or build a
 credential APDU.
 
-## PIN2
+## PIN2 qualified-signature convenience window
 
-PIN2 is never cached. It is entered for one qualified-signature operation,
-reconstructed as `Pin2`, consumed by an at-most-once credential command, and
-zeroized on every success or error path.
+FINEID S4-1 v4.2 sections 4.1 and 8.1.7 require manual PIN entry for every
+qualified-signature operation. ReFineID's explicit product decision is to give
+PIN2 a bounded one-minute convenience window so that one signing session --
+for example, a document set signed in a single user action -- does not prompt
+for every signature. This exception must be disclosed as a profile deviation
+in public release documentation.
 
-PIN2 must never be clonable, serializable, persisted, placed on a command line,
-stored in an environment variable, or rendered by `Debug`, tracing, panic, or
-error output.
+The default maximum is a one-minute idle window measured by a monotonic clock
+from the last card-confirmed successful use. The cache design constraints,
+destructive-checkout discipline, and mandatory invalidation triggers defined
+below for PIN1 apply to PIN2 identically; only the window length differs. The
+cached entry is bound to the complete card token identifier and the PIN2
+qualified-signature role. Its capability excludes PIN management and every
+PIN1 operation.
+
+Each use is still reconstructed as `Pin2`, consumed by an at-most-once
+credential command, and zeroized on every success or error path. PIN2 must
+never be clonable, serializable, persisted, placed on a command line, stored
+in an environment variable, or rendered by `Debug`, tracing, panic, or error
+output.
 
 ## PIN1 authentication convenience window
 
@@ -23,8 +36,8 @@ authentication operations, including TLS client-auth signatures driven by
 CryptoTokenKit. The software re-presents PIN1 to the card for every operation;
 it does not treat card verification state as persistent. This exception must be
 disclosed as a profile deviation in public release documentation. It never
-extends to PIN2 or either qualified-signature key. The current specification is
-published on the
+extends to PIN2 or either qualified-signature key; PIN2 has its own, shorter
+window above. The current specification is published on the
 [DVV FINEID specifications page](https://dvv.fi/en/fineid-specifications).
 
 The default maximum is a 15-minute idle window measured by a monotonic clock
@@ -50,7 +63,7 @@ must destroy the value rather than resurrect it.
 
 ## Mandatory invalidation
 
-Positive PIN1 state is destroyed on:
+Positive PIN1 or PIN2 state is destroyed on:
 
 - card removal, reader loss, or token-identifier mismatch;
 - wrong-PIN, blocked-PIN, malformed-response, or transport failure;

@@ -193,8 +193,10 @@ impl fmt::Debug for Pin1 {
 
 /// Validated PIN2 value.
 ///
-/// PIN2 is never cacheable. The type deliberately does not implement `Clone`,
-/// `Copy`, serialization, or a raw-byte accessor.
+/// PIN2 retention is bounded by the one-minute qualified-signature
+/// convenience window in the credential custody contract. The type
+/// deliberately does not implement `Clone`, `Copy`, serialization, or a
+/// raw-byte accessor.
 #[derive(ZeroizeOnDrop)]
 pub struct Pin2(SecretDigits);
 
