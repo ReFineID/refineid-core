@@ -12,14 +12,16 @@ crates stay transport-agnostic and country-profile-neutral.
 
 ## Crates
 
+- `crates/apdu` (`refineid-apdu`) -- typed ISO 7816-4 commands, status
+  words, and the card transport port, with separate replay-safe and
+  credential command ownership paths.
 - `crates/auth` (`refineid-auth`) -- PIN role types and, in a later slice,
   the PIN verification, change, and unblock chains.
 - `crates/pace` (`refineid-pace`) -- Card Access Number input type and, in a
   later slice, the PACE secure-channel driver.
 
-Planned slices add `refineid-apdu` (typed command and transport port),
-`refineid-pkcs15` (card file system reads), and `refineid-sign` (card-side
-signature operations).
+Planned slices add `refineid-pkcs15` (card file system reads) and
+`refineid-sign` (card-side signature operations).
 
 ## Security posture
 

@@ -69,23 +69,35 @@ own its consuming protocol:
   boundary, and the non-clonable, non-copyable `Pin1` and `Pin2` role types;
 - the repository policy checker and CI gate.
 
+The second slice admits the APDU foundation in `refineid-apdu`:
+
+- typed ISO 7816-4 command builders and validated primitives, every wire
+  value a named constant;
+- the decoded status word;
+- the two command ownership paths: a debuggable public command with no
+  raw-bytes constructor and no `Clone`, and a zeroizing, non-clonable,
+  redacted credential command assembled from a custody-taking body and
+  consumed exactly once; and
+- the typed-only transport port, with no byte-slice transmit, so a
+  builder-granted permission such as the single wrong-Le correction
+  survives to the adapter.
+
 ## Quarantined until redesigned
 
-The following code is intentionally not copied from the private development
-tree:
+The admitted APDU slice replaces the quarantined designs from the private
+development tree: an unrestricted raw command constructor, command buffers
+deriving `Clone`, a byte-slice transport path that silently copied buffers
+and dropped builder permissions, and credential bytes travelling through
+generic command types do not enter the public tree in any form.
 
-- unrestricted raw APDU constructors;
-- command buffers that derive `Clone` or raw `Debug`;
-- transports that accept an arbitrary byte slice or silently copy it;
-- automatic retry paths that could replay a credential command;
-- authentication and signing chains built on those transports; and
+Still outside the public tree:
+
+- transport adapters until their custody and fault paths pass review;
+- authentication and signing command chains;
+- automatic retry paths of any kind around credential commands; and
 - the legacy PIN cache.
 
-The APDU migration needs two ownership paths. Public, replay-safe commands may
-use a debuggable public-command type. Credential commands need a separate
-zeroizing, non-clonable, non-debuggable type that is consumed by an at-most-once
-transport operation. A credential command must never enter generic tracing
-before redaction.
+A credential command must never enter generic tracing before redaction.
 
 ## Admission checklist
 

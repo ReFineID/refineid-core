@@ -16,6 +16,14 @@ deployment details.
   relocated here into the crates that will own their consuming protocol
   layers. Secret, personal-information, protocol, and dependency scans were
   performed for the initial publication and repeated for the relocation.
+- **APDU foundation.** Publication under Apache-2.0 directed on 2026-08-10
+  for the `refineid-apdu` slice: typed ISO 7816-4 command builders and
+  primitives, the decoded status word, the two command ownership paths, and
+  the typed-only transport port. Reconstructed against the private
+  development tree's proven wire shapes with the quarantined designs
+  replaced; wire constants are traced to the DVV FINEID specifications and
+  the ISO/IEC 7816 series. Secret, personal-information, protocol, and
+  dependency scans were performed for this slice.
 
 Before a later slice is admitted, its review must record:
 

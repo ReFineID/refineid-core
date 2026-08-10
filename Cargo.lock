@@ -61,6 +61,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "refineid-apdu"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "trybuild",
+ "zeroize",
+]
+
+[[package]]
 name = "refineid-auth"
 version = "0.1.0"
 dependencies = [

@@ -1,8 +1,8 @@
 # Credential custody
 
-This is the target contract for PIN-bearing code. The current public slice
-implements only the refined input types; it does not yet cache a PIN or build a
-credential APDU.
+This is the target contract for PIN-bearing code. The public tree currently
+implements the refined input types and the credential-command ownership types;
+it does not yet build a credential APDU flow or cache a PIN.
 
 ## PIN2 qualified-signature convenience window
 
