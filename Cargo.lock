@@ -79,12 +79,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "refineid-ber"
+version = "0.1.0"
+
+[[package]]
 name = "refineid-pace"
 version = "0.1.0"
 dependencies = [
  "serde",
  "trybuild",
  "zeroize",
+]
+
+[[package]]
+name = "refineid-pkcs15"
+version = "0.1.0"
+dependencies = [
+ "refineid-apdu",
+ "refineid-ber",
 ]
 
 [[package]]

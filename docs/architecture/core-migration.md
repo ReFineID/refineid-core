@@ -82,6 +82,17 @@ The second slice admits the APDU foundation in `refineid-apdu`:
   builder-granted permission such as the single wrong-Le correction
   survives to the adapter.
 
+The third slice admits the read path:
+
+- `refineid-ber`: the minimal BER-TLV encoder and decoder with the typed
+  tag layer; the encoder is fallible rather than panicking;
+- `refineid-pkcs15`: PKCS#15 application and file selection with the
+  per-generation fallback variants, bounded chunked reads, certificate
+  retrieval sized by the DER header and returned as plain DER,
+  EF.TokenInfo parsing, and the typed chip-serial forms. Reader
+  discovery and generation classification from certificate contents
+  stay outside the core.
+
 ## Quarantined until redesigned
 
 The admitted APDU slice replaces the quarantined designs from the private

@@ -3,7 +3,9 @@ resolver = "3"
 members = [
     "crates/apdu",
     "crates/auth",
+    "crates/ber",
     "crates/pace",
+    "crates/pkcs15",
     "tools/xtask",
 ]
 
@@ -16,6 +18,8 @@ authors = ["Petri Koistinen"]
 repository = "https://github.com/ReFineID/refineid-core"
 
 [workspace.dependencies]
+refineid-apdu = { path = "crates/apdu" }
+refineid-ber = { path = "crates/ber" }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 rustc_lexer = "0.1"
 serde = "1"

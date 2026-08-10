@@ -17,11 +17,17 @@ crates stay transport-agnostic and country-profile-neutral.
   credential command ownership paths.
 - `crates/auth` (`refineid-auth`) -- PIN role types and, in a later slice,
   the PIN verification, change, and unblock chains.
+- `crates/ber` (`refineid-ber`) -- minimal BER-TLV encoder and decoder
+  with a typed tag layer.
 - `crates/pace` (`refineid-pace`) -- Card Access Number input type and, in a
   later slice, the PACE secure-channel driver.
+- `crates/pkcs15` (`refineid-pkcs15`) -- PKCS#15 file-system reads:
+  selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
+  the typed chip-serial forms.
 
-Planned slices add `refineid-pkcs15` (card file system reads) and
-`refineid-sign` (card-side signature operations).
+Planned slices add the PACE protocol into `refineid-pace`, the PIN chains
+into `refineid-auth`, and `refineid-sign` (card-side signature
+operations).
 
 ## Security posture
 

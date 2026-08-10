@@ -24,6 +24,15 @@ deployment details.
   replaced; wire constants are traced to the DVV FINEID specifications and
   the ISO/IEC 7816 series. Secret, personal-information, protocol, and
   dependency scans were performed for this slice.
+- **Read path.** Publication under Apache-2.0 directed on 2026-08-10 for
+  the `refineid-ber` and `refineid-pkcs15` slices: the minimal BER-TLV
+  layer, PKCS#15 selection and bounded reads, certificate retrieval as
+  plain DER, EF.TokenInfo parsing, and the typed chip-serial forms.
+  Reconstructed against the private development tree's proven wire
+  shapes; reader discovery and certificate-content classification stayed
+  behind. Constants are traced to the DVV FINEID specifications (S4-2),
+  ISO/IEC 7816-15, and ITU-T X.690. Secret, personal-information,
+  protocol, and dependency scans were performed for this slice.
 
 Before a later slice is admitted, its review must record:
 
