@@ -26,9 +26,11 @@ crates stay transport-agnostic and country-profile-neutral.
 - `crates/pkcs15` (`refineid-pkcs15`) -- PKCS#15 file-system reads:
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
+- `crates/sign` (`refineid-sign`) -- card-side signing: the MSE/PSO
+  choreography for the pre-hashed RSA and P-384 ECDSA chains.
 
-Planned slices add the PIN change and unblock chains into `refineid-auth`
-and `refineid-sign` (card-side signature operations).
+Planned work adds the PIN change and unblock chains into `refineid-auth`,
+and host-side-encoded RSA (PSS) and PSO:DECIPHER into `refineid-sign`.
 
 ## Security posture
 

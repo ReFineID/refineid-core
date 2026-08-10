@@ -53,6 +53,17 @@ deployment details.
   section 3.5) and ISO/IEC 7816-4 section 7.5.6. Secret,
   personal-information, protocol, and dependency scans were performed
   for this slice.
+- **Card-side signing.** Publication under Apache-2.0 directed on
+  2026-08-10 for the `refineid-sign` slice: the MSE/PSO signing
+  choreography for the pre-hashed RSASSA-PKCS1 over SHA-256 and ECDSA
+  over P-384 chains, the typed algorithm references and external-hash
+  values, and the algorithm-typed signature container. Reconstructed
+  against the private development tree's proven wire shapes; host-side
+  encoded RSA and the decipher chains stayed behind. Constants are
+  traced to the DVV FINEID specifications (S1 sections 3.6 through 3.8,
+  S4-1) and ISO/IEC 7816-8, and cross-checked against the offline
+  specification. Secret, personal-information, protocol, and dependency
+  scans were performed for this slice.
 
 Before a later slice is admitted, its review must record:
 

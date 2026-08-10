@@ -6,6 +6,7 @@ members = [
     "crates/ber",
     "crates/pace",
     "crates/pkcs15",
+    "crates/sign",
     "tools/xtask",
 ]
 

@@ -133,6 +133,30 @@ is observed on hardware with the retry counter checked before and after,
 and PIN2 and card-mutating tests stay off automation, per the admission
 checklist and the Apple release plan.
 
+The sixth slice admits card-side signing in `refineid-sign`:
+
+- `sign_prehashed_sha256_rsa` and `sign_prehashed_sha384_ecdsa` drive the
+  three-command choreography -- MANAGE SECURITY ENVIRONMENT, PERFORM
+  SECURITY OPERATION: HASH with a host-computed digest, and PERFORM
+  SECURITY OPERATION: COMPUTE DIGITAL SIGNATURE -- against the auth key
+  behind the authentication template and the qualified-signature key
+  behind the digital-signature template;
+- the typed algorithm references, external-hash values, and the
+  algorithm-typed signature container.
+
+The card holds the private key and performs the private-key operation;
+these commands carry no credential material and use the plain transport
+path, so signing composes over the PACE secure-messaging transport
+unchanged once the gating PIN is verified. The pre-hashed chains fit the
+short form -- the digest is small and the card returns the signature
+through the adapter's chained response -- so no extended-length or
+command-chaining support is needed. Host-side-encoded RSA (for PSS,
+which needs command chaining) and PSO:DECIPHER follow in a later slice.
+The wire, algorithm references, and length checks are covered by
+scripted-transport tests and cross-checked against the specification;
+no signing path is described as working against a real card until it is
+observed on hardware.
+
 ## Hardware validation
 
 Slices two through five have been exercised against both shipped FINEID
@@ -169,7 +193,8 @@ Still outside the public tree:
 - transport adapters until their custody and fault paths pass review;
 - the PIN change and PUK-unblock command chains, which are
   card-mutating and need the separately supplied credential role types;
-- the signing command chains;
+- host-side-encoded RSA signing (for PSS) and PSO:DECIPHER, which need
+  command chaining and a decipher path;
 - automatic retry paths of any kind around credential commands; and
 - the legacy PIN cache.
 

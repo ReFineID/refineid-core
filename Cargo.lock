@@ -324,6 +324,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "refineid-sign"
+version = "0.1.0"
+dependencies = [
+ "refineid-apdu",
+]
+
+[[package]]
 name = "rustc_lexer"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
