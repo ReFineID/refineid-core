@@ -33,12 +33,24 @@ use refineid_apdu::{
 
 use crate::credentials::{Pin1, Pin2};
 
-/// PKCS#15 PIN1 reference: the authentication PIN (FINEID S1 v4.2
-/// section 3.5.1).
+/// Citizen-card PIN1 reference: the global authentication PIN (FINEID S1
+/// v4.2 section 3.5.2).
 pub const PIN1_REFERENCE: u8 = 0x11;
-/// PKCS#15 PIN2 reference: the qualified-signature PIN (FINEID S1 v4.2
-/// section 3.5.2).
+/// Citizen-card PIN2 reference: the local qualified-signature PIN (FINEID
+/// S1 v4.2 section 3.5.2).
 pub const PIN2_REFERENCE: u8 = 0x82;
+
+/// Organizational-card PIN1 reference: the PIN AUTH security-data-object
+/// identifier (FINEID S4-2 v4.0 section 4.2).
+pub const PIN1_REFERENCE_ORGANIZATIONAL: u8 = 0x03;
+/// Organizational-card PIN2 reference: the PIN SIG security-data-object
+/// identifier (FINEID S4-2 v4.0 section 4.2).
+pub const PIN2_REFERENCE_ORGANIZATIONAL: u8 = 0x04;
+
+/// Largest credential the organizational card stores; it compares at the
+/// typed length and caps every credential here (FINEID S4-2 v4.0
+/// section 4.3).
+pub const ORGANIZATIONAL_PIN_MAX_LENGTH: usize = 8;
 
 /// VERIFY instruction byte (ISO 7816-4 section 7.5.6).
 const VERIFY_INS: u8 = 0x20;
@@ -62,12 +74,39 @@ pub enum PinSlot {
 }
 
 impl PinSlot {
-    /// The VERIFY P2 reference byte for this slot.
+    /// The citizen-card VERIFY P2 reference byte for this slot.
     #[must_use]
     pub const fn reference(self) -> u8 {
-        match self {
-            Self::Pin1 => PIN1_REFERENCE,
-            Self::Pin2 => PIN2_REFERENCE,
+        PinReferenceScheme::Citizen.reference(self)
+    }
+}
+
+/// Which credential-reference numbering the card in session uses.
+///
+/// Citizen cards number their credentials as FINEID S1 v4.2 section
+/// 3.5.2 reads; organizational cards number them by their FINEID S4-2
+/// v4.0 section 4.2 security-data-object identifiers instead. The S4-2
+/// v4.0 section 5.2 sample prints references that contradict the same
+/// document's section 4.2 tables and shipped cards, so the numbering is
+/// resolved by asking the card rather than trusting the sample; the
+/// probe is counter-safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinReferenceScheme {
+    /// FINEID S1 v4.2 numbering: the citizen cards.
+    Citizen,
+    /// FINEID S4-2 v4.0 numbering: the organizational cards.
+    Organizational,
+}
+
+impl PinReferenceScheme {
+    /// The VERIFY P2 reference byte for `slot` under this numbering.
+    #[must_use]
+    pub const fn reference(self, slot: PinSlot) -> u8 {
+        match (self, slot) {
+            (Self::Citizen, PinSlot::Pin1) => PIN1_REFERENCE,
+            (Self::Citizen, PinSlot::Pin2) => PIN2_REFERENCE,
+            (Self::Organizational, PinSlot::Pin1) => PIN1_REFERENCE_ORGANIZATIONAL,
+            (Self::Organizational, PinSlot::Pin2) => PIN2_REFERENCE_ORGANIZATIONAL,
         }
     }
 }
@@ -116,6 +155,17 @@ pub enum AuthError<E> {
     /// The credential command could not be assembled; unreachable for a
     /// validated PIN, kept fail-closed.
     Command(CredentialBodyError),
+    /// The typed PIN is longer than the organizational card stores. That
+    /// card compares at the typed length and caps every credential at
+    /// [`ORGANIZATIONAL_PIN_MAX_LENGTH`], so a longer entry can never
+    /// match; it is refused locally before any command, so no retry is
+    /// spent learning it.
+    LengthUnsupported {
+        /// The rejected length in digits.
+        got: usize,
+        /// The maximum the card stores.
+        max: usize,
+    },
 }
 
 impl<E: core::fmt::Display> core::fmt::Display for AuthError<E> {
@@ -124,6 +174,10 @@ impl<E: core::fmt::Display> core::fmt::Display for AuthError<E> {
             Self::Transport(e) => write!(f, "auth transport: {e}"),
             Self::Outcome(outcome) => write!(f, "auth transport state: {outcome}"),
             Self::Command(e) => write!(f, "auth command: {e}"),
+            Self::LengthUnsupported { got, max } => write!(
+                f,
+                "auth: a {got}-digit PIN exceeds the organizational card's {max}-digit maximum"
+            ),
         }
     }
 }
@@ -160,12 +214,22 @@ pub const fn classify_pin_status_sw(sw: StatusWord) -> PinStatus {
     }
 }
 
-/// Right-pad the typed digits into a fresh stored-length block.
-fn padded_block(digits: &[u8]) -> [u8; PIN_STORED_LENGTH] {
+/// Build the VERIFY credential block for `scheme` into a fresh buffer,
+/// returning the buffer and the number of bytes the card compares.
+///
+/// The citizen card compares a block right-padded with the pad byte to
+/// the stored length; the organizational card compares the bare typed
+/// digits at their own length, because it publishes no padding and a
+/// padded block would fail the comparison and spend a retry.
+fn credential_block(scheme: PinReferenceScheme, digits: &[u8]) -> ([u8; PIN_STORED_LENGTH], usize) {
     let mut block = [PIN_PAD_BYTE; PIN_STORED_LENGTH];
     let copy_len = digits.len().min(PIN_STORED_LENGTH);
     block[..copy_len].copy_from_slice(&digits[..copy_len]);
-    block
+    let compared = match scheme {
+        PinReferenceScheme::Citizen => PIN_STORED_LENGTH,
+        PinReferenceScheme::Organizational => copy_len,
+    };
+    (block, compared)
 }
 
 /// PIN management operations, layered as default methods on every
@@ -174,10 +238,14 @@ fn padded_block(digits: &[u8]) -> [u8; PIN_STORED_LENGTH] {
 /// Bring the trait into scope to use the methods; the blanket
 /// implementation applies to every transport, so a plain contact
 /// transport and a PACE secure-messaging transport both gain the same
-/// PIN operations.
+/// PIN operations. The scheme-free entry points resolve the card's
+/// credential numbering first; a caller that will issue several
+/// operations resolves once with [`PinOps::resolve_pin_reference_scheme`]
+/// and passes the result to the `_with_scheme` forms.
 pub trait PinOps: CardTransport {
-    /// VERIFY PIN1 (the authentication PIN). The PIN is consumed and its
-    /// digits are zeroized; the slot is fixed by the argument type.
+    /// VERIFY PIN1 (the authentication PIN), resolving the card's
+    /// credential numbering first so an organizational card is not sent
+    /// a citizen block. The PIN is consumed and its digits are zeroized.
     ///
     /// # Errors
     ///
@@ -187,11 +255,12 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        self.verify(PinSlot::Pin1, pin.digits())
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.verify_pin1_with_scheme(scheme, pin)
     }
 
-    /// VERIFY PIN2 (the qualified-signature PIN). The PIN is consumed and
-    /// its digits are zeroized; the slot is fixed by the argument type.
+    /// VERIFY PIN2 (the qualified-signature PIN), resolving the numbering
+    /// first.
     ///
     /// # Errors
     ///
@@ -200,10 +269,74 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        self.verify(PinSlot::Pin2, pin.digits())
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.verify_pin2_with_scheme(scheme, pin)
     }
 
-    /// Probe the retry state of a slot without decrementing any counter.
+    /// VERIFY PIN1 under an explicit numbering.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinOps::verify_pin1`], plus [`AuthError::LengthUnsupported`]
+    /// when the organizational card cannot store the typed length.
+    fn verify_pin1_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+        pin: Pin1,
+    ) -> Result<VerifyOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        self.verify(scheme, PinSlot::Pin1, pin.digits())
+    }
+
+    /// VERIFY PIN2 under an explicit numbering.
+    ///
+    /// # Errors
+    ///
+    /// As [`PinOps::verify_pin1_with_scheme`].
+    fn verify_pin2_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+        pin: Pin2,
+    ) -> Result<VerifyOutcome, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        self.verify(scheme, PinSlot::Pin2, pin.digits())
+    }
+
+    /// Resolve the card's credential numbering with a counter-safe
+    /// probe. The citizen numbering is tried first; a
+    /// reference-not-found answer re-probes under the organizational
+    /// numbering, and a recognized state there settles it as
+    /// organizational. Nothing but the card is trusted, and no counter
+    /// is touched.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn resolve_pin_reference_scheme(&mut self) -> Result<PinReferenceScheme, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let citizen = self.probe_status_word(PinReferenceScheme::Citizen, PinSlot::Pin1)?;
+        if citizen != StatusWord::ReferenceDataNotFound {
+            return Ok(PinReferenceScheme::Citizen);
+        }
+        let organizational =
+            self.probe_status_word(PinReferenceScheme::Organizational, PinSlot::Pin1)?;
+        match classify_pin_status_sw(organizational) {
+            PinStatus::Other(_) => Ok(PinReferenceScheme::Citizen),
+            PinStatus::Verified
+            | PinStatus::Remaining(_)
+            | PinStatus::NoInfo
+            | PinStatus::Locked => Ok(PinReferenceScheme::Organizational),
+        }
+    }
+
+    /// Probe the retry state of a slot without decrementing any counter,
+    /// resolving the numbering first.
     ///
     /// # Errors
     ///
@@ -212,35 +345,81 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.pin_status_with_scheme(scheme, slot)
+    }
+
+    /// Probe the retry state of a slot under an explicit numbering.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn pin_status_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+        slot: PinSlot,
+    ) -> Result<PinStatus, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        Ok(classify_pin_status_sw(
+            self.probe_status_word(scheme, slot)?,
+        ))
+    }
+
+    /// Send the counter-safe VERIFY status probe and return the raw
+    /// status word.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn probe_status_word(
+        &mut self,
+        scheme: PinReferenceScheme,
+        slot: PinSlot,
+    ) -> Result<StatusWord, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
         let command = CommandApdu::case_1(CommandHeader {
             class: ApduClass::Plain,
             instruction: VERIFY_INS,
             p1: VERIFY_P1,
-            p2: slot.reference(),
+            p2: scheme.reference(slot),
         });
         let response = self
             .transmit(&command)
             .map_err(AuthError::Transport)?
             .into_response()
             .map_err(AuthError::Outcome)?;
-        Ok(classify_pin_status_sw(response.status_word()))
+        Ok(response.status_word())
     }
 
-    /// Assemble and send the VERIFY credential command for `slot`.
+    /// Assemble and send the VERIFY credential command for `slot` under
+    /// `scheme`.
     ///
     /// # Errors
     ///
-    /// As [`PinOps::verify_pin1`].
+    /// As [`PinOps::verify_pin1_with_scheme`].
     fn verify(
         &mut self,
+        scheme: PinReferenceScheme,
         slot: PinSlot,
         digits: &[u8],
     ) -> Result<VerifyOutcome, AuthError<Self::Error>>
     where
         Self: Sized,
     {
-        let mut block = padded_block(digits);
-        let body = match CredentialBody::take_from(&mut block) {
+        if matches!(scheme, PinReferenceScheme::Organizational)
+            && digits.len() > ORGANIZATIONAL_PIN_MAX_LENGTH
+        {
+            return Err(AuthError::LengthUnsupported {
+                got: digits.len(),
+                max: ORGANIZATIONAL_PIN_MAX_LENGTH,
+            });
+        }
+        let (mut block, compared) = credential_block(scheme, digits);
+        let body = match CredentialBody::take_from(&mut block[..compared]) {
             Ok(body) => body,
             Err(error) => return Err(AuthError::Command(error)),
         };
@@ -249,7 +428,7 @@ pub trait PinOps: CardTransport {
                 class: ApduClass::Plain,
                 instruction: VERIFY_INS,
                 p1: VERIFY_P1,
-                p2: slot.reference(),
+                p2: scheme.reference(slot),
             },
             body,
         );
@@ -267,15 +446,125 @@ impl<T: CardTransport + ?Sized> PinOps for T {}
 #[cfg(test)]
 mod tests {
     use super::{
-        PIN_STORED_LENGTH, PinSlot, PinStatus, VerifyOutcome, classify_pin_status_sw,
-        classify_verify_sw, padded_block,
+        PIN_PAD_BYTE, PIN_STORED_LENGTH, PIN1_REFERENCE, PIN1_REFERENCE_ORGANIZATIONAL, PinOps,
+        PinReferenceScheme, PinSlot, PinStatus, VERIFY_INS, VERIFY_P1, VerifyOutcome,
+        classify_pin_status_sw, classify_verify_sw, credential_block,
     };
-    use refineid_apdu::{PinRetries, StatusWord};
+    use crate::credentials::{Pin1, UnvalidatedSecret};
+    use refineid_apdu::{
+        ApduClass, CardTransport, CommandApdu, CredentialCommand, PinRetries, ResponseApdu,
+        StatusWord, TransportOutcome,
+    };
 
     /// A retry count for the classifier tests.
     const THREE_RETRIES: u8 = 3;
-    /// Length of the PIN fixture used in the padding test.
+    /// Length of the PIN fixture used in the block tests.
     const PIN_FIXTURE_LEN: usize = 4;
+    /// Digits shared by the exact-wire tests.
+    const WIRE_DIGITS: &[u8] = b"1234";
+    /// Length of a VERIFY header: class, instruction, P1, P2.
+    const HEADER_LENGTH: usize = 4;
+
+    /// A VERIFY header for `reference`, built from named constants so the
+    /// wire tests carry no bare byte values.
+    fn verify_header(reference: u8) -> [u8; HEADER_LENGTH] {
+        [ApduClass::Plain.as_byte(), VERIFY_INS, VERIFY_P1, reference]
+    }
+
+    fn scripted_response(sw: StatusWord) -> ResponseApdu {
+        let [sw1, sw2] = sw.as_u16().to_be_bytes();
+        ResponseApdu {
+            body: vec![],
+            sw1,
+            sw2,
+        }
+    }
+
+    fn pin1(digits: &[u8]) -> Pin1 {
+        Pin1::reconstruct(UnvalidatedSecret::from_owned_bytes(digits.to_vec()))
+            .expect("valid PIN1 fixture")
+    }
+
+    /// Records the last plain and credential wire the trait produced,
+    /// answering every exchange with a fixed status word.
+    struct WireRecorder {
+        plain: Option<Vec<u8>>,
+        credential: Option<Vec<u8>>,
+        sw: StatusWord,
+    }
+
+    impl WireRecorder {
+        fn new(sw: StatusWord) -> Self {
+            Self {
+                plain: None,
+                credential: None,
+                sw,
+            }
+        }
+    }
+
+    impl CardTransport for WireRecorder {
+        type Error = String;
+
+        fn transmit(&mut self, command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
+            self.plain = Some(command.as_bytes().to_vec());
+            Ok(TransportOutcome::Response(scripted_response(self.sw)))
+        }
+
+        fn transmit_credential(
+            &mut self,
+            command: CredentialCommand,
+        ) -> Result<TransportOutcome, Self::Error> {
+            self.credential = Some(command.expose_wire(<[u8]>::to_vec));
+            Ok(TransportOutcome::Response(scripted_response(self.sw)))
+        }
+    }
+
+    #[test]
+    fn citizen_verify_ships_the_padded_block_under_the_citizen_reference() {
+        let mut transport = WireRecorder::new(StatusWord::Success);
+        transport
+            .verify_pin1_with_scheme(PinReferenceScheme::Citizen, pin1(WIRE_DIGITS))
+            .expect("scripted verify succeeds");
+        let mut expected = verify_header(PIN1_REFERENCE).to_vec();
+        expected.push(PIN_STORED_LENGTH as u8);
+        let mut block = WIRE_DIGITS.to_vec();
+        block.resize(PIN_STORED_LENGTH, PIN_PAD_BYTE);
+        expected.extend_from_slice(&block);
+        assert_eq!(transport.credential.as_deref(), Some(expected.as_slice()));
+        assert!(
+            transport.plain.is_none(),
+            "the PIN must travel only through the credential path"
+        );
+    }
+
+    #[test]
+    fn organizational_verify_ships_the_bare_typed_digits_under_the_org_reference() {
+        let mut transport = WireRecorder::new(StatusWord::Success);
+        transport
+            .verify_pin1_with_scheme(PinReferenceScheme::Organizational, pin1(WIRE_DIGITS))
+            .expect("scripted verify succeeds");
+        let mut expected = verify_header(PIN1_REFERENCE_ORGANIZATIONAL).to_vec();
+        expected.push(WIRE_DIGITS.len() as u8);
+        expected.extend_from_slice(WIRE_DIGITS);
+        assert_eq!(transport.credential.as_deref(), Some(expected.as_slice()));
+    }
+
+    #[test]
+    fn the_counter_safe_probe_sends_only_the_header() {
+        let mut transport = WireRecorder::new(StatusWord::Success);
+        transport
+            .pin_status_with_scheme(PinReferenceScheme::Citizen, PinSlot::Pin1)
+            .expect("scripted probe succeeds");
+        assert_eq!(
+            transport.plain.as_deref(),
+            Some(verify_header(PIN1_REFERENCE).as_slice())
+        );
+        assert!(
+            transport.credential.is_none(),
+            "the counter-safe probe carries no credential"
+        );
+    }
 
     #[test]
     fn slot_references_are_distinct() {
@@ -286,15 +575,36 @@ mod tests {
     }
 
     #[test]
-    fn padding_fills_to_the_stored_length() {
-        let block = padded_block(b"1234");
-        assert_eq!(block.len(), PIN_STORED_LENGTH);
-        assert_eq!(&block[..PIN_FIXTURE_LEN], b"1234");
+    fn scheme_references_differ_between_citizen_and_organizational() {
+        assert_eq!(
+            PinReferenceScheme::Citizen.reference(PinSlot::Pin1),
+            super::PIN1_REFERENCE
+        );
+        assert_eq!(
+            PinReferenceScheme::Organizational.reference(PinSlot::Pin1),
+            super::PIN1_REFERENCE_ORGANIZATIONAL
+        );
+        assert_eq!(
+            PinReferenceScheme::Organizational.reference(PinSlot::Pin2),
+            super::PIN2_REFERENCE_ORGANIZATIONAL
+        );
+    }
+
+    #[test]
+    fn citizen_block_pads_and_organizational_block_stays_typed_length() {
+        let (citizen, citizen_compared) = credential_block(PinReferenceScheme::Citizen, b"1234");
+        assert_eq!(citizen_compared, PIN_STORED_LENGTH);
+        assert_eq!(&citizen[..PIN_FIXTURE_LEN], b"1234");
         assert!(
-            block[PIN_FIXTURE_LEN..]
+            citizen[PIN_FIXTURE_LEN..]
                 .iter()
                 .all(|&byte| byte == super::PIN_PAD_BYTE)
         );
+
+        let (organizational, org_compared) =
+            credential_block(PinReferenceScheme::Organizational, b"1234");
+        assert_eq!(org_compared, PIN_FIXTURE_LEN);
+        assert_eq!(&organizational[..PIN_FIXTURE_LEN], b"1234");
     }
 
     #[test]

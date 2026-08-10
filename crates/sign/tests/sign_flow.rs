@@ -13,37 +13,63 @@
 // limitations under the License.
 
 //! Scripted-transport tests for the signing choreography.
+//!
+//! The scripted expectations are assembled from the crate's own typed
+//! command builders, so the test pins the *choreography* - which commands
+//! the chain issues and in what order - while the exact byte layout of
+//! each command is pinned by the command builders' unit tests.
 
 use refineid_apdu::{
     CardTransport, CommandApdu, CredentialCommand, ResponseApdu, StatusWord, TransportOutcome,
 };
-use refineid_sign::commands::{SHA256_LEN, SHA384_LEN};
-use refineid_sign::{ECDSA_P384_SIG_BYTES, KeyRef, RSA_3072_SIG_BYTES, SignError, SignOps};
+use refineid_sign::commands::{
+    ExternalHashValue, MseSet, PsoComputeDigitalSignature, PsoHashExternal, SHA256_LEN, SHA384_LEN,
+    SignatureAlgRef,
+};
+use refineid_sign::{
+    ECDSA_P384_SIG_BYTES, KeyRef, ORG_QUALIFIED_KEY_REF, RSA_3072_SIG_BYTES, SignError, SignOps,
+    SignScheme,
+};
 
 /// Digest filler byte for the fixtures.
 const DIGEST_FILL: u8 = 0x5A;
 /// Signature filler byte for the fixtures.
 const SIG_FILL: u8 = 0xC3;
 
-/// Expected MSE:Set AT wire for the RSA auth key.
-const EXPECTED_MSE_AT: &[u8] = &[
-    0x00, 0x22, 0x41, 0xA4, 0x06, 0x80, 0x01, 0x42, 0x84, 0x01, 0x01,
-];
-/// Expected MSE:Set DST wire for the ECDSA signature key.
-const EXPECTED_MSE_DST: &[u8] = &[
-    0x00, 0x22, 0x41, 0xB6, 0x06, 0x80, 0x01, 0x54, 0x84, 0x01, 0x02,
-];
-/// Expected PSO:HASH prefix for a SHA-256 digest (before the digest
-/// bytes): header, Lc, then the hash-value tag and length.
-const EXPECTED_PSO_HASH_SHA256: &[u8] = &[0x00, 0x2A, 0x90, 0xA0, 0x22, 0x90, 0x20];
-/// Expected PSO:HASH prefix for a SHA-384 digest.
-const EXPECTED_PSO_HASH_SHA384: &[u8] = &[0x00, 0x2A, 0x90, 0xA0, 0x32, 0x90, 0x30];
-/// Expected PSO:CDS wire.
-const EXPECTED_PSO_CDS: &[u8] = &[0x00, 0x2A, 0x9E, 0x9A, 0x00];
-
 fn success(body: Vec<u8>) -> ResponseApdu {
     let [sw1, sw2] = StatusWord::Success.as_u16().to_be_bytes();
     ResponseApdu { body, sw1, sw2 }
+}
+
+fn mse_wire(scheme: SignScheme, alg: SignatureAlgRef, key: KeyRef) -> Vec<u8> {
+    MseSet {
+        alg_ref: alg,
+        key_ref: key.reference(scheme),
+    }
+    .into_apdu()
+    .expect("MSE:Set encodes")
+    .as_bytes()
+    .to_vec()
+}
+
+fn pso_hash_wire(hash: ExternalHashValue) -> Vec<u8> {
+    PsoHashExternal { hash }
+        .into_apdu()
+        .expect("PSO:HASH encodes")
+        .as_bytes()
+        .to_vec()
+}
+
+fn pso_cds_empty_wire() -> Vec<u8> {
+    PsoComputeDigitalSignature.into_apdu().as_bytes().to_vec()
+}
+
+fn pso_cds_inline_wire(digest: &[u8]) -> Vec<u8> {
+    PsoComputeDigitalSignature
+        .into_apdu_with_digest(digest)
+        .expect("inline PSO:CDS encodes")
+        .as_bytes()
+        .to_vec()
 }
 
 /// A transport that checks each command against a scripted expectation
@@ -86,24 +112,28 @@ impl CardTransport for Scripted {
     }
 }
 
-fn sha256_hash_wire(digest: &[u8]) -> Vec<u8> {
-    let mut wire = EXPECTED_PSO_HASH_SHA256.to_vec();
-    wire.extend_from_slice(digest);
-    wire
-}
-
 #[test]
-fn rsa_sha256_drives_the_three_command_chain() {
+fn citizen_rsa_sha256_drives_the_three_command_chain() {
     let digest = [DIGEST_FILL; SHA256_LEN];
     let signature = vec![SIG_FILL; RSA_3072_SIG_BYTES];
     let mut transport = Scripted::new(vec![
-        (EXPECTED_MSE_AT.to_vec(), success(vec![])),
-        (sha256_hash_wire(&digest), success(vec![])),
-        (EXPECTED_PSO_CDS.to_vec(), success(signature.clone())),
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA256_RSA_PKCS1,
+                KeyRef::Auth,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha256(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(), success(signature.clone())),
     ]);
 
     let result = transport
-        .sign_prehashed_sha256_rsa(KeyRef::Auth, digest)
+        .sign_prehashed_sha256_rsa(SignScheme::Citizen, KeyRef::Auth, digest)
         .expect("scripted RSA sign succeeds");
     assert_eq!(result.as_bytes(), signature.as_slice());
     assert_eq!(result.len(), RSA_3072_SIG_BYTES);
@@ -111,22 +141,57 @@ fn rsa_sha256_drives_the_three_command_chain() {
 }
 
 #[test]
-fn ecdsa_p384_uses_the_dst_template_and_raw_signature() {
+fn citizen_ecdsa_p384_signs_over_the_loaded_hash() {
     let digest = [DIGEST_FILL; SHA384_LEN];
     let signature = vec![SIG_FILL; ECDSA_P384_SIG_BYTES];
-    let mut hash_wire = EXPECTED_PSO_HASH_SHA384.to_vec();
-    hash_wire.extend_from_slice(&digest);
     let mut transport = Scripted::new(vec![
-        (EXPECTED_MSE_DST.to_vec(), success(vec![])),
-        (hash_wire, success(vec![])),
-        (EXPECTED_PSO_CDS.to_vec(), success(signature.clone())),
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA384_ECDSA,
+                KeyRef::Sign,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha384(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(), success(signature.clone())),
     ]);
 
     let result = transport
-        .sign_prehashed_sha384_ecdsa(KeyRef::Sign, digest)
+        .sign_prehashed_sha384_ecdsa(SignScheme::Citizen, KeyRef::Sign, digest)
         .expect("scripted ECDSA sign succeeds");
     assert_eq!(result.as_bytes(), signature.as_slice());
     assert!(transport.drained());
+}
+
+#[test]
+fn organizational_sign_skips_pso_hash_and_carries_the_digest_inline() {
+    let digest = [DIGEST_FILL; SHA384_LEN];
+    let signature = vec![SIG_FILL; ECDSA_P384_SIG_BYTES];
+    let mse = mse_wire(
+        SignScheme::Organizational,
+        SignatureAlgRef::SHA384_ECDSA,
+        KeyRef::Sign,
+    );
+    // The organizational qualified key is named by its local reference,
+    // the last byte of the MSE:Set control-reference body.
+    assert_eq!(mse.last().copied(), Some(ORG_QUALIFIED_KEY_REF));
+    let mut transport = Scripted::new(vec![
+        (mse, success(vec![])),
+        (pso_cds_inline_wire(&digest), success(signature.clone())),
+    ]);
+
+    let result = transport
+        .sign_prehashed_sha384_ecdsa(SignScheme::Organizational, KeyRef::Sign, digest)
+        .expect("scripted organizational sign succeeds");
+    assert_eq!(result.as_bytes(), signature.as_slice());
+    assert!(
+        transport.drained(),
+        "the organizational chain issues exactly MSE:Set and PSO:CDS"
+    );
 }
 
 #[test]
@@ -136,13 +201,23 @@ fn an_unexpected_signature_length_is_rejected() {
     // RSA-3072, or a misconfiguration.
     let short = vec![SIG_FILL; ECDSA_P384_SIG_BYTES];
     let mut transport = Scripted::new(vec![
-        (EXPECTED_MSE_AT.to_vec(), success(vec![])),
-        (sha256_hash_wire(&digest), success(vec![])),
-        (EXPECTED_PSO_CDS.to_vec(), success(short)),
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA256_RSA_PKCS1,
+                KeyRef::Auth,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha256(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(), success(short)),
     ]);
 
     let error = transport
-        .sign_prehashed_sha256_rsa(KeyRef::Auth, digest)
+        .sign_prehashed_sha256_rsa(SignScheme::Citizen, KeyRef::Auth, digest)
         .expect_err("a short signature is rejected");
     assert!(matches!(
         error,
@@ -162,10 +237,17 @@ fn a_status_word_failure_names_the_stage() {
         sw1,
         sw2,
     };
-    let mut transport = Scripted::new(vec![(EXPECTED_MSE_AT.to_vec(), rejected)]);
+    let mut transport = Scripted::new(vec![(
+        mse_wire(
+            SignScheme::Citizen,
+            SignatureAlgRef::SHA256_RSA_PKCS1,
+            KeyRef::Auth,
+        ),
+        rejected,
+    )]);
 
     let error = transport
-        .sign_prehashed_sha256_rsa(KeyRef::Auth, digest)
+        .sign_prehashed_sha256_rsa(SignScheme::Citizen, KeyRef::Auth, digest)
         .expect_err("a rejected MSE fails");
     assert!(matches!(
         error,

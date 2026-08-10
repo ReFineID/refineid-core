@@ -15,12 +15,16 @@
 //! Card-side signing for FINEID.
 //!
 //! The card holds the private key and performs the private-key
-//! operation; the host computes the digest and drives the three-command
-//! choreography (MANAGE SECURITY ENVIRONMENT, PERFORM SECURITY
-//! OPERATION: HASH, PERFORM SECURITY OPERATION: COMPUTE DIGITAL
-//! SIGNATURE). The PIN that gates the key must already be verified in
-//! the card session; these commands carry no credential material and use
-//! the plain transport path.
+//! operation; the host computes the digest and drives the MANAGE
+//! SECURITY ENVIRONMENT / PERFORM SECURITY OPERATION choreography. The
+//! shape follows the card family the session resolved (see
+//! [`SignScheme`]): the citizen card loads the digest with PSO:HASH and
+//! signs an empty PSO:CDS, while the organizational card carries the
+//! digest inline in a single PSO:CDS and issues no PSO:HASH. Both
+//! families set the digital-signature template for either key. The PIN
+//! that gates the key must already be verified in the card session;
+//! these commands carry no credential material and use the plain
+//! transport path.
 //!
 //! This slice admits the pre-hashed chains that fit the short-form
 //! command: RSASSA-PKCS1-v1_5 over SHA-256 for the RSA keys, and ECDSA
@@ -33,8 +37,8 @@ pub mod container;
 use refineid_apdu::{CardTransport, CommandDataError, ResponseApdu, StatusWord, TransportOutcome};
 
 use commands::{
-    ExternalHashValue, MseSet, MseSetTemplate, PsoComputeDigitalSignature, PsoHashExternal,
-    SHA256_LEN, SHA384_LEN, SignatureAlgRef,
+    ExternalHashValue, MseSet, PsoComputeDigitalSignature, PsoHashExternal, SHA256_LEN, SHA384_LEN,
+    SignatureAlgRef,
 };
 pub use container::{EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, Signature};
 
@@ -42,6 +46,26 @@ pub use container::{EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, Signature};
 pub const KEY_REF_AUTH: u8 = 0x01;
 /// PKCS#15 key reference for the qualified-signature key (PIN2-gated).
 pub const KEY_REF_SIGN: u8 = 0x02;
+/// Organizational card's qualified-signature key reference. That key is
+/// local to DF.ESIGN, and a local security-data-object reference sets
+/// bit 8 over the object number (IAS-ECC v1.0.1 section 4.4); the global
+/// form names no key and the signature answers `6A88`.
+pub const ORG_QUALIFIED_KEY_REF: u8 = 0x82;
+
+/// Which card family's signing chain and key numbering to drive.
+///
+/// The citizen card loads the host digest with PSO:HASH and signs an
+/// empty PSO:CDS; the organizational card carries the digest inline in
+/// PSO:CDS and names its qualified key by the local reference. The family
+/// is resolved once - the auth crate's counter-safe probe settles it when
+/// a PIN is verified - and passed to the signing entry points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignScheme {
+    /// FINEID S1 numbering and chain: the citizen cards.
+    Citizen,
+    /// FINEID S4 numbering and chain: the organizational cards.
+    Organizational,
+}
 
 /// Expected RSA-3072 signature length in bytes.
 pub const RSA_3072_SIG_BYTES: usize = 384;
@@ -61,7 +85,7 @@ pub enum KeyRef {
 }
 
 impl KeyRef {
-    /// The card-side reference byte.
+    /// The card-side reference byte under the citizen numbering.
     #[must_use]
     pub const fn as_byte(self) -> u8 {
         match self {
@@ -70,13 +94,15 @@ impl KeyRef {
         }
     }
 
-    /// The template FINEID gates this key's signing primitive behind:
-    /// the authentication key uses the authentication template, the
-    /// qualified-signature key the digital-signature template.
-    const fn template(self) -> MseSetTemplate {
-        match self {
-            Self::Auth => MseSetTemplate::Authentication,
-            Self::Sign => MseSetTemplate::DigitalSignature,
+    /// The card-side reference byte under `scheme`. The organizational
+    /// qualified-signature key is local to DF.ESIGN and named by
+    /// [`ORG_QUALIFIED_KEY_REF`]; every other key keeps its own
+    /// reference.
+    #[must_use]
+    pub const fn reference(self, scheme: SignScheme) -> u8 {
+        match (scheme, self) {
+            (SignScheme::Organizational, Self::Sign) => ORG_QUALIFIED_KEY_REF,
+            _ => self.as_byte(),
         }
     }
 }
@@ -138,6 +164,7 @@ pub trait SignOps: CardTransport {
     /// word.
     fn mse_set(
         &mut self,
+        scheme: SignScheme,
         alg_ref: SignatureAlgRef,
         key: KeyRef,
     ) -> Result<(), SignError<Self::Error>>
@@ -145,9 +172,8 @@ pub trait SignOps: CardTransport {
         Self: Sized,
     {
         let command = MseSet {
-            template: key.template(),
             alg_ref,
-            key_ref: key,
+            key_ref: key.reference(scheme),
         }
         .into_apdu()
         .map_err(SignError::Command)?;
@@ -185,10 +211,33 @@ pub trait SignOps: CardTransport {
         Ok(self.exchange(&command, "PSO:CDS")?.body)
     }
 
+    /// Ship the host digest inline and have the card sign it in one
+    /// PSO:CDS, the organizational chain's single signing command.
+    ///
+    /// # Errors
+    ///
+    /// Transport failures, a state transition, or a non-success status
+    /// word.
+    fn pso_compute_signature_over_digest(
+        &mut self,
+        digest: &[u8],
+    ) -> Result<Vec<u8>, SignError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let command = PsoComputeDigitalSignature
+            .into_apdu_with_digest(digest)
+            .map_err(SignError::Command)?;
+        Ok(self.exchange(&command, "PSO:CDS")?.body)
+    }
+
     /// Sign a SHA-256 digest with an RSA key, returning the RSA-3072
     /// signature.
     ///
-    /// The key's PIN must already be verified in the card session.
+    /// The key's PIN must already be verified in the card session, and
+    /// `scheme` must be the family the session resolved. On an
+    /// organizational card the qualified key is local to DF.ESIGN, so
+    /// that directory must be the selected DF.
     ///
     /// # Errors
     ///
@@ -196,15 +245,20 @@ pub trait SignOps: CardTransport {
     /// [`RSA_3072_SIG_BYTES`].
     fn sign_prehashed_sha256_rsa(
         &mut self,
+        scheme: SignScheme,
         key: KeyRef,
         digest: [u8; SHA256_LEN],
     ) -> Result<Signature<RsaPkcs1Sha256>, SignError<Self::Error>>
     where
         Self: Sized,
     {
-        self.mse_set(SignatureAlgRef::SHA256_RSA_PKCS1, key)?;
-        self.pso_hash(ExternalHashValue::Sha256(digest))?;
-        let bytes = self.pso_compute_signature()?;
+        let bytes = drive_chain(
+            self,
+            scheme,
+            SignatureAlgRef::SHA256_RSA_PKCS1,
+            key,
+            ExternalHashValue::Sha256(digest),
+        )?;
         if bytes.len() != RSA_3072_SIG_BYTES {
             return Err(SignError::UnexpectedSignatureLength {
                 got: bytes.len(),
@@ -217,7 +271,10 @@ pub trait SignOps: CardTransport {
     /// Sign a SHA-384 digest with a P-384 key, returning the raw ECDSA
     /// `r || s` signature.
     ///
-    /// The key's PIN must already be verified in the card session.
+    /// The key's PIN must already be verified in the card session, and
+    /// `scheme` must be the family the session resolved. On an
+    /// organizational card the qualified key is local to DF.ESIGN, so
+    /// that directory must be the selected DF.
     ///
     /// # Errors
     ///
@@ -225,15 +282,20 @@ pub trait SignOps: CardTransport {
     /// [`ECDSA_P384_SIG_BYTES`].
     fn sign_prehashed_sha384_ecdsa(
         &mut self,
+        scheme: SignScheme,
         key: KeyRef,
         digest: [u8; SHA384_LEN],
     ) -> Result<Signature<EcdsaP384>, SignError<Self::Error>>
     where
         Self: Sized,
     {
-        self.mse_set(SignatureAlgRef::SHA384_ECDSA, key)?;
-        self.pso_hash(ExternalHashValue::Sha384(digest))?;
-        let bytes = self.pso_compute_signature()?;
+        let bytes = drive_chain(
+            self,
+            scheme,
+            SignatureAlgRef::SHA384_ECDSA,
+            key,
+            ExternalHashValue::Sha384(digest),
+        )?;
         if bytes.len() != ECDSA_P384_SIG_BYTES {
             return Err(SignError::UnexpectedSignatureLength {
                 got: bytes.len(),
@@ -270,3 +332,23 @@ pub trait SignOps: CardTransport {
 }
 
 impl<T: CardTransport + ?Sized> SignOps for T {}
+
+/// Drive the resolved signing chain end to end and return the raw
+/// signature bytes: MSE:Set, then either PSO:HASH plus an empty PSO:CDS
+/// (citizen) or a single inline-digest PSO:CDS (organizational).
+fn drive_chain<T: SignOps>(
+    transport: &mut T,
+    scheme: SignScheme,
+    alg_ref: SignatureAlgRef,
+    key: KeyRef,
+    hash: ExternalHashValue,
+) -> Result<Vec<u8>, SignError<T::Error>> {
+    transport.mse_set(scheme, alg_ref, key)?;
+    match scheme {
+        SignScheme::Citizen => {
+            transport.pso_hash(hash)?;
+            transport.pso_compute_signature()
+        }
+        SignScheme::Organizational => transport.pso_compute_signature_over_digest(hash.as_bytes()),
+    }
+}

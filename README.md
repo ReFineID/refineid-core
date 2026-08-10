@@ -16,9 +16,10 @@ crates stay transport-agnostic and country-profile-neutral.
   words, and the card transport port, with separate replay-safe and
   credential command ownership paths.
 - `crates/auth` (`refineid-auth`) -- PIN role types, VERIFY PIN1/PIN2
-  over the credential-command path, the counter-safe status probe, and
-  the retry-risk policy; the change and unblock chains follow in a later
-  slice.
+  over the credential-command path for both citizen and organizational
+  cards, the counter-safe status probe that resolves the card's
+  credential numbering, and the retry-risk policy; the change and unblock
+  chains follow in a later slice.
 - `crates/ber` (`refineid-ber`) -- minimal BER-TLV encoder and decoder
   with a typed tag layer.
 - `crates/pace` (`refineid-pace`) -- Card Access Number input type, the
@@ -27,7 +28,9 @@ crates stay transport-agnostic and country-profile-neutral.
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
 - `crates/sign` (`refineid-sign`) -- card-side signing: the MSE/PSO
-  choreography for the pre-hashed RSA and P-384 ECDSA chains.
+  choreography for the pre-hashed RSA and P-384 ECDSA chains, over both
+  the citizen chain (PSO:HASH then an empty PSO:CDS) and the
+  organizational chain (an inline-digest PSO:CDS).
 
 Planned work adds the PIN change and unblock chains into `refineid-auth`,
 and host-side-encoded RSA (PSS) and PSO:DECIPHER into `refineid-sign`.

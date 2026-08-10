@@ -136,11 +136,12 @@ checklist and the Apple release plan.
 The sixth slice admits card-side signing in `refineid-sign`:
 
 - `sign_prehashed_sha256_rsa` and `sign_prehashed_sha384_ecdsa` drive the
-  three-command choreography -- MANAGE SECURITY ENVIRONMENT, PERFORM
-  SECURITY OPERATION: HASH with a host-computed digest, and PERFORM
-  SECURITY OPERATION: COMPUTE DIGITAL SIGNATURE -- against the auth key
-  behind the authentication template and the qualified-signature key
-  behind the digital-signature template;
+  MANAGE SECURITY ENVIRONMENT / PERFORM SECURITY OPERATION choreography:
+  MSE:SET pins the key and algorithm in the digital-signature template --
+  the only template the specification sets for PSO:COMPUTE DIGITAL
+  SIGNATURE, for the authentication key and the qualified-signature key
+  alike -- and PSO:HASH loads the host-computed digest before an empty
+  PSO:CDS returns the signature;
 - the typed algorithm references, external-hash values, and the
   algorithm-typed signature container.
 
@@ -156,6 +157,38 @@ The wire, algorithm references, and length checks are covered by
 scripted-transport tests and cross-checked against the specification;
 no signing path is described as working against a real card until it is
 observed on hardware.
+
+The seventh slice admits organizational card support across
+`refineid-auth` and `refineid-sign`:
+
+- credential-numbering resolution: rather than trust a specification
+  sample whose printed references contradict its own tables and shipped
+  cards, the numbering is resolved by the counter-safe VERIFY probe --
+  the citizen numbering is tried first, and a reference-not-found answer
+  re-probes under the organizational numbering -- so a session drives the
+  numbering the card in hand actually uses;
+- organizational VERIFY: the typed PIN is compared at its own length with
+  no padding and under the organizational references, and a PIN longer
+  than the organizational maximum is refused locally, before any command
+  spends a retry learning it;
+- organizational signing: the qualified key is named by its local
+  DF.ESIGN reference, and the digest rides inline in a single PSO:CDS with
+  no PSO:HASH step -- the shape the organizational card requires and the
+  citizen card refuses, which is why the resolved numbering picks the
+  chain.
+
+This slice also corrects the signing environment admitted in the sixth:
+PSO:COMPUTE DIGITAL SIGNATURE runs under the digital-signature template
+for the authentication key as well as the qualified-signature key,
+matching the specification -- which defines only hash, digital-signature,
+and confidentiality templates for the operation, no authentication one --
+and the behaviour reference. The organizational reconstruction is traced
+to the FINEID S4-2 and S4-1 specifications and cross-checked against the
+country-neutral behaviour reference that is exercised against live
+organizational cards. No organizational path is described as
+hardware-validated here: no organizational card was available for
+verification, so the organizational VERIFY and signing chains rest on the
+specification and the behaviour reference rather than an observed card.
 
 ## Hardware validation
 

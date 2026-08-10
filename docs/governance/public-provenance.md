@@ -64,6 +64,21 @@ deployment details.
   S4-1) and ISO/IEC 7816-8, and cross-checked against the offline
   specification. Secret, personal-information, protocol, and dependency
   scans were performed for this slice.
+- **Organizational card support.** Publication under Apache-2.0 directed
+  on 2026-08-11 for the organizational slice across `refineid-auth` and
+  `refineid-sign`: the counter-safe resolution of the card's
+  credential numbering, the organizational VERIFY with typed-length
+  comparison and no padding, and the organizational signing chain with
+  the local qualified-key reference and the inline-digest PSO:CDS. The
+  slice also corrects the signing environment to the digital-signature
+  template for both keys. Reconstructed against the offline
+  specifications and cross-checked against the country-neutral behaviour
+  reference exercised against live organizational cards; no card was
+  available, so no organizational path is recorded as hardware-validated.
+  Constants and flow are traced to the DVV FINEID specifications (S4-2,
+  S4-1, and S1) and the ISO/IEC 7816 series. Secret,
+  personal-information, protocol, and dependency scans were performed for
+  this slice.
 
 Before a later slice is admitted, its review must record:
 

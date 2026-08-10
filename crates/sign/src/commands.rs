@@ -14,25 +14,29 @@
 
 //! Typed commands for the FINEID signing chain.
 //!
-//! Signing is a three-command choreography (FINEID S1 v4.2 sections 3.6
-//! through 3.8): MANAGE SECURITY ENVIRONMENT selects the key and
-//! algorithm, PERFORM SECURITY OPERATION: HASH ships the host-computed
-//! digest, and PERFORM SECURITY OPERATION: COMPUTE DIGITAL SIGNATURE
-//! returns the signature. The card holds the private key and never
-//! reveals it; these commands carry no credential material.
+//! Signing is a two- or three-command choreography (FINEID S1 v4.2
+//! sections 3.6 through 3.8). MANAGE SECURITY ENVIRONMENT: SET pins the
+//! key and algorithm in the digital-signature template, and PERFORM
+//! SECURITY OPERATION: COMPUTE DIGITAL SIGNATURE returns the signature.
+//! The citizen card loads the host-computed digest with an intervening
+//! PERFORM SECURITY OPERATION: HASH and signs an empty PSO:CDS; the
+//! organizational card carries the digest inline in PSO:CDS and issues no
+//! PSO:HASH. The card holds the private key and never reveals it; these
+//! commands carry no credential material.
 
 use refineid_apdu::{ApduClass, CommandApdu, CommandDataError, CommandHeader};
 
-use crate::KeyRef;
-
 /// MANAGE SECURITY ENVIRONMENT instruction.
 const MSE_INS: u8 = 0x22;
-/// MSE P1 selecting SET for computation and deciphering.
+/// MSE P1 selecting SET for computation and decipherment.
 const MSE_P1_SET: u8 = 0x41;
-/// MSE P2 for the digital-signature template.
+/// MSE P2 for the digital-signature template (DST). It is the only
+/// template FINEID sets ahead of PERFORM SECURITY OPERATION: COMPUTE
+/// DIGITAL SIGNATURE, for the authentication key and the
+/// qualified-signature key alike: S1 v4.2 section 3.6.2 defines a
+/// hash (AAh), a digital-signature (B6h), and a confidentiality (B8h)
+/// template, and PSO:CDS runs under the digital-signature one.
 const MSE_P2_DST: u8 = 0xB6;
-/// MSE P2 for the authentication template.
-const MSE_P2_AT: u8 = 0xA4;
 
 /// Control-reference-object tag for the algorithm reference.
 const CRDO_ALG_REF: u8 = 0x80;
@@ -100,37 +104,17 @@ impl SignatureAlgRef {
     }
 }
 
-/// Which security-environment template MSE:SET targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MseSetTemplate {
-    /// Digital-signature template: the qualified-signature key signs a
-    /// hashed message.
-    DigitalSignature,
-    /// Authentication template: FINEID cards gate the auth key's signing
-    /// primitive behind this template.
-    Authentication,
-}
-
-impl MseSetTemplate {
-    /// The MSE P2 byte for this template.
-    #[must_use]
-    pub const fn p2(self) -> u8 {
-        match self {
-            Self::DigitalSignature => MSE_P2_DST,
-            Self::Authentication => MSE_P2_AT,
-        }
-    }
-}
-
-/// MANAGE SECURITY ENVIRONMENT: SET for a signing key.
+/// MANAGE SECURITY ENVIRONMENT: SET for a signing key, in the
+/// digital-signature template.
 #[derive(Debug, Clone, Copy)]
 pub struct MseSet {
-    /// Which template to set.
-    pub template: MseSetTemplate,
     /// Algorithm reference.
     pub alg_ref: SignatureAlgRef,
-    /// Private-key reference.
-    pub key_ref: KeyRef,
+    /// Private-key reference byte, already resolved for the card's
+    /// numbering: a citizen reference from [`crate::KeyRef::as_byte`], or
+    /// the organizational qualified key's local reference from
+    /// [`crate::KeyRef::reference`].
+    pub key_ref: u8,
 }
 
 impl MseSet {
@@ -148,14 +132,14 @@ impl MseSet {
             self.alg_ref.as_byte(),
             CRDO_KEY_REF,
             CRDO_VALUE_LEN,
-            self.key_ref.as_byte(),
+            self.key_ref,
         ];
         CommandApdu::case_3(
             CommandHeader {
                 class: ApduClass::Plain,
                 instruction: MSE_INS,
                 p1: MSE_P1_SET,
-                p2: self.template.p2(),
+                p2: MSE_P2_DST,
             },
             &data,
         )
@@ -239,14 +223,16 @@ impl PsoHashExternal {
     }
 }
 
-/// PSO:COMPUTE DIGITAL SIGNATURE over the previously stored hash.
+/// PSO:COMPUTE DIGITAL SIGNATURE. The empty-bodied form signs a hash the
+/// card already holds; the inline form carries the digest itself.
 #[derive(Debug, Clone, Copy)]
 pub struct PsoComputeDigitalSignature;
 
 impl PsoComputeDigitalSignature {
-    /// Serialise into a case-2 command APDU. The card signs the stored
-    /// hash and returns the signature; the adapter chains any 61xx
-    /// response.
+    /// Serialise the empty-bodied form into a case-2 command APDU: the
+    /// card signs the hash previously loaded by [`PsoHashExternal`] and
+    /// returns the signature. This ends the citizen chain (FINEID S1 v4.2
+    /// section 3.8); the adapter chains any 61xx response.
     #[must_use]
     pub fn into_apdu(self) -> CommandApdu {
         CommandApdu::case_2(
@@ -259,26 +245,44 @@ impl PsoComputeDigitalSignature {
             PSO_CDS_LE_ANY,
         )
     }
+
+    /// Serialise the inline-digest form into a case-4 command APDU
+    /// (`00 2A 9E 9A <Lc> <digest> 00`): the organizational card has no
+    /// external-hash PSO:HASH step, so the digest rides inline and the
+    /// card signs it directly. The citizen card rejects this shape and the
+    /// organizational card rejects the empty form, which is why the
+    /// resolved numbering picks the chain.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandDataError`] never triggers: a digest is at most 64 bytes,
+    /// well within the short form. Fallible so the caller stays
+    /// fail-closed.
+    pub fn into_apdu_with_digest(self, digest: &[u8]) -> Result<CommandApdu, CommandDataError> {
+        CommandApdu::case_4(
+            CommandHeader {
+                class: ApduClass::Plain,
+                instruction: PSO_INS,
+                p1: PSO_CDS_P1,
+                p2: PSO_CDS_P2,
+            },
+            digest,
+            PSO_CDS_LE_ANY,
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        ExternalHashValue, MseSet, MseSetTemplate, PsoComputeDigitalSignature, PsoHashExternal,
-        SHA256_LEN, SHA384_LEN, SignatureAlgRef,
+        CRDO_ALG_REF, CRDO_KEY_REF, CRDO_VALUE_LEN, ExternalHashValue, HASH_VALUE_HEADER_LEN,
+        MSE_INS, MSE_P1_SET, MSE_P2_DST, MseSet, PSO_CDS_LE_ANY, PSO_CDS_P1, PSO_CDS_P2,
+        PSO_HASH_P1, PSO_HASH_P2_EXTERNAL, PSO_HASH_TAG_VALUE, PSO_INS, PsoComputeDigitalSignature,
+        PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
     };
-    use crate::KeyRef;
+    use crate::{KEY_REF_AUTH, KEY_REF_SIGN, ORG_QUALIFIED_KEY_REF};
+    use refineid_apdu::ApduClass;
 
-    /// Expected MSE:Set AT wire for the RSA auth key: header, Lc, then
-    /// the algorithm and key control-reference objects.
-    const EXPECTED_MSE_AT_RSA: &[u8] = &[
-        0x00, 0x22, 0x41, 0xA4, 0x06, 0x80, 0x01, 0x42, 0x84, 0x01, 0x01,
-    ];
-    /// Expected PSO:HASH wire for a SHA-256 digest: header, Lc, tag,
-    /// length, then the digest.
-    const EXPECTED_PSO_HASH_SHA256_PREFIX: &[u8] = &[0x00, 0x2A, 0x90, 0xA0, 0x22, 0x90, 0x20];
-    /// Expected PSO:CDS wire: header and expected-length byte.
-    const EXPECTED_PSO_CDS: &[u8] = &[0x00, 0x2A, 0x9E, 0x9A, 0x00];
     /// A digest filler byte.
     const FILL: u8 = 0xAB;
     /// The documented SHA-256 + RSA-PKCS1 algorithm-reference byte.
@@ -288,6 +292,62 @@ mod tests {
     /// The documented SHA-256 + ECDSA algorithm-reference byte.
     const ALG_SHA256_ECDSA: u8 = 0x44;
 
+    /// The expected MSE:Set wire for `alg` and `key_ref`, assembled from
+    /// the named framing constants: header, Lc, then the algorithm and
+    /// key control-reference objects, all under the digital-signature
+    /// template.
+    fn mse_set_wire(alg: u8, key_ref: u8) -> Vec<u8> {
+        let body = [
+            CRDO_ALG_REF,
+            CRDO_VALUE_LEN,
+            alg,
+            CRDO_KEY_REF,
+            CRDO_VALUE_LEN,
+            key_ref,
+        ];
+        let mut wire = vec![ApduClass::Plain.as_byte(), MSE_INS, MSE_P1_SET, MSE_P2_DST];
+        wire.push(body.len() as u8);
+        wire.extend_from_slice(&body);
+        wire
+    }
+
+    /// The expected PSO:HASH prefix for a digest of `digest_len`: header,
+    /// Lc, then the hash-value tag and length, before the digest bytes.
+    fn pso_hash_prefix(digest_len: usize) -> Vec<u8> {
+        let object_len = HASH_VALUE_HEADER_LEN + digest_len;
+        vec![
+            ApduClass::Plain.as_byte(),
+            PSO_INS,
+            PSO_HASH_P1,
+            PSO_HASH_P2_EXTERNAL,
+            object_len as u8,
+            PSO_HASH_TAG_VALUE,
+            digest_len as u8,
+        ]
+    }
+
+    /// The expected empty-bodied PSO:CDS wire: header and expected-length
+    /// byte, no data.
+    fn pso_cds_empty_wire() -> Vec<u8> {
+        vec![
+            ApduClass::Plain.as_byte(),
+            PSO_INS,
+            PSO_CDS_P1,
+            PSO_CDS_P2,
+            PSO_CDS_LE_ANY,
+        ]
+    }
+
+    /// The expected inline-digest PSO:CDS wire: header, Lc, the digest,
+    /// then the expected-length byte.
+    fn pso_cds_inline_wire(digest: &[u8]) -> Vec<u8> {
+        let mut wire = vec![ApduClass::Plain.as_byte(), PSO_INS, PSO_CDS_P1, PSO_CDS_P2];
+        wire.push(digest.len() as u8);
+        wire.extend_from_slice(digest);
+        wire.push(PSO_CDS_LE_ANY);
+        wire
+    }
+
     #[test]
     fn algorithm_references_pack_the_documented_bytes() {
         assert_eq!(SignatureAlgRef::SHA256_RSA_PKCS1.as_byte(), ALG_SHA256_RSA);
@@ -296,15 +356,45 @@ mod tests {
     }
 
     #[test]
-    fn mse_set_at_matches_the_specified_wire() {
+    fn mse_set_for_the_signature_key_matches_the_specified_wire() {
         let apdu = MseSet {
-            template: MseSetTemplate::Authentication,
             alg_ref: SignatureAlgRef::SHA256_RSA_PKCS1,
-            key_ref: KeyRef::Auth,
+            key_ref: KEY_REF_SIGN,
         }
         .into_apdu()
         .expect("fixed body encodes");
-        assert_eq!(apdu.as_bytes(), EXPECTED_MSE_AT_RSA);
+        assert_eq!(apdu.as_bytes(), mse_set_wire(ALG_SHA256_RSA, KEY_REF_SIGN));
+    }
+
+    #[test]
+    fn mse_set_names_the_authentication_key_in_the_signature_template() {
+        // The authentication key signs under the digital-signature
+        // template too: FINEID defines no authentication template for
+        // PSO:CDS.
+        let apdu = MseSet {
+            alg_ref: SignatureAlgRef::SHA384_ECDSA,
+            key_ref: KEY_REF_AUTH,
+        }
+        .into_apdu()
+        .expect("fixed body encodes");
+        assert_eq!(
+            apdu.as_bytes(),
+            mse_set_wire(ALG_SHA384_ECDSA, KEY_REF_AUTH)
+        );
+    }
+
+    #[test]
+    fn organizational_mse_set_names_the_local_qualified_key() {
+        let apdu = MseSet {
+            alg_ref: SignatureAlgRef::SHA256_ECDSA,
+            key_ref: ORG_QUALIFIED_KEY_REF,
+        }
+        .into_apdu()
+        .expect("fixed body encodes");
+        assert_eq!(
+            apdu.as_bytes(),
+            mse_set_wire(ALG_SHA256_ECDSA, ORG_QUALIFIED_KEY_REF)
+        );
     }
 
     #[test]
@@ -315,14 +405,9 @@ mod tests {
         .into_apdu()
         .expect("digest object encodes");
         let wire = apdu.as_bytes();
-        assert_eq!(
-            &wire[..EXPECTED_PSO_HASH_SHA256_PREFIX.len()],
-            EXPECTED_PSO_HASH_SHA256_PREFIX
-        );
-        assert_eq!(
-            wire.len(),
-            EXPECTED_PSO_HASH_SHA256_PREFIX.len() + SHA256_LEN
-        );
+        let prefix = pso_hash_prefix(SHA256_LEN);
+        assert_eq!(&wire[..prefix.len()], prefix.as_slice());
+        assert_eq!(wire.len(), prefix.len() + SHA256_LEN);
     }
 
     #[test]
@@ -338,10 +423,19 @@ mod tests {
     }
 
     #[test]
-    fn pso_cds_matches_the_specified_wire() {
+    fn pso_cds_empty_matches_the_specified_wire() {
         assert_eq!(
             PsoComputeDigitalSignature.into_apdu().as_bytes(),
-            EXPECTED_PSO_CDS
+            pso_cds_empty_wire()
         );
+    }
+
+    #[test]
+    fn pso_cds_inline_carries_the_digest_between_lc_and_le() {
+        let digest = [FILL; SHA384_LEN];
+        let apdu = PsoComputeDigitalSignature
+            .into_apdu_with_digest(&digest)
+            .expect("digest fits the short form");
+        assert_eq!(apdu.as_bytes(), pso_cds_inline_wire(&digest));
     }
 }
