@@ -1,0 +1,88 @@
+# Working in this repository
+
+This is the protocol core for a national electronic identity card. Work
+as if a wrong byte locks a citizen's card or leaks a citizen's PIN,
+because it can. The code is small on purpose: every crate is expected to
+be read whole, understood whole, and held to the policy whole.
+
+## Read before writing
+
+Three documents are normative. Read them in full before designing or
+editing anything, and do not infer the rules from existing code -- code
+may predate its own review:
+
+- [docs/architecture/core-migration.md](docs/architecture/core-migration.md)
+  -- slice admission, trust by construction, the numeric policy.
+- [docs/architecture/refined-types.md](docs/architecture/refined-types.md)
+  -- the type discipline: predicates, borders, the three states of bytes,
+  dependence with reason, no ducks at the border.
+- [docs/security/credential-custody.md](docs/security/credential-custody.md)
+  -- how secrets move.
+
+## Design before code
+
+Every slice starts as a short design, not as code. Before writing, answer
+in your own working notes:
+
+1. **Trust origins.** For every input, where do the bytes come from --
+   card, host, specification constant? Each external origin gets one
+   border and one constructor.
+2. **Predicates.** Which specification sentences state the invariants?
+   List them with citations. The constructor will check all of them,
+   because downstream trusts totally.
+3. **Shape of the meaning.** What does downstream actually consult?
+   Deconstruct to that depth: typed parts for what is consulted, a
+   length-checked container for what merely travels through.
+4. **Static or dynamic.** Which values does the specification fix at
+   design time -- lift those into the type -- and which does the world
+   choose at runtime -- check those at the border.
+5. **The failure story.** For each way the input can be malformed, which
+   typed error names it, and what does the caller safely do next?
+
+If any answer is missing, the slice is not ready; read the specification
+section again. The design questions in the refined-types policy's
+"Review questions" are the checklist for both writing and review.
+
+## The floor
+
+Mechanical requirements, all of them, before any commit:
+
+- `cargo fmt --check`, `cargo build`, `cargo test`, and
+  `cargo clippy --all-targets` -- zero warnings, warnings are denied;
+- `cargo doc --no-deps` with rustdoc warnings denied;
+- `cargo run -q -p xtask -- check-magic-numbers` -- clean;
+- no anonymous numeric literals and no hand-typed hexadecimal arrays
+  anywhere, tests included; wire fixtures are assembled from the same
+  named constants the serializer uses;
+- new dependencies are exceptional and justified; nothing that drags a
+  second DER stack or duplicates what a crate here already does;
+- safe Rust only; protocol, parsing, and secret handling never in
+  `unsafe`.
+
+## The floor is not the goal
+
+The gates catch mechanical failures; none of them can tell a
+predicate-carrying type from a costume. Your job is the part the tools
+cannot check: types whose existence proves their invariants, borders
+where all validation concentrates, secrets that cannot leak by
+construction. When a rule seems to block a sensible design, re-derive the
+design from the specification and the trust topology. Never resolve the
+tension with a rename, wrapper, encoding, or attribute that quiets a
+check while keeping the design -- that is a defect with better camouflage.
+If the policy itself seems wrong, say so openly in the commit body or the
+review instead of engineering around it; the policy has been corrected
+before and the correction made the core better.
+
+## Commits and publication
+
+- Imperative subject, explanatory body; no attribution trailers of any
+  kind.
+- This is a public repository. No private paths, no unpublished project
+  context, no personal data, and no secrets -- test PINs and card
+  numbers included -- in any file, fixture, comment, or commit message.
+- Nothing card-mutating or retry-consuming is described as working until
+  it has been observed on real hardware; scripted tests earn the words
+  "covered by scripted tests", not "works".
+- Claims about card behaviour, cryptography, or platform interfaces are
+  verified against a primary source -- the FINEID specifications, ISO,
+  the RFCs -- not assumed from memory.
