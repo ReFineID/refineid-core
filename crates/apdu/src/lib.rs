@@ -21,6 +21,16 @@
 //! Neither path accepts or exposes an unstructured byte blob, and the
 //! [`CardTransport`] port carries only the typed forms.
 
+/// The crate family's build version.
+///
+/// Release and distribution builds -- and any build with `SOURCE_DATE_EPOCH`
+/// set, as Debian and Nix set it -- report the bare workspace version, so the
+/// version is deterministic and nothing is invented at package time. A local
+/// debug build additionally carries a `+B` build-metadata stamp (B = the UTC
+/// hour times ten plus the minute over ten), a development convenience that is
+/// never committed. See this crate's `build.rs`.
+pub const BUILD_VERSION: &str = env!("REFINEID_BUILD_VERSION");
+
 pub mod command;
 pub mod iso7816;
 pub mod primitives;
@@ -37,6 +47,19 @@ pub use status_word::{PinRetries, StatusWord};
 pub use transport::{
     CardTransport, ResponseApdu, TransportErrorExt, TransportErrorKind, TransportOutcome,
 };
+
+#[cfg(test)]
+mod build_version_tests {
+    use super::BUILD_VERSION;
+
+    #[test]
+    fn build_version_extends_the_crate_version() {
+        assert!(
+            BUILD_VERSION.starts_with(env!("CARGO_PKG_VERSION")),
+            "build version {BUILD_VERSION} must extend the crate version"
+        );
+    }
+}
 
 #[cfg(test)]
 mod public_contract_tests {
