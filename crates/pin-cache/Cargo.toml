@@ -1,0 +1,25 @@
+[package]
+name = "refineid-pin-cache"
+description = "Process-lifetime negative PIN cache that refuses card-rejected values"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "refineid_pin_cache"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+refineid-auth.workspace = true
+getrandom.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+zeroize.workspace = true

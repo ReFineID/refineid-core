@@ -189,6 +189,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest",
+]
+
+[[package]]
 name = "hybrid-array"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -323,6 +332,18 @@ dependencies = [
  "sha2",
  "subtle",
  "trybuild",
+ "zeroize",
+]
+
+[[package]]
+name = "refineid-pin-cache"
+version = "26.8.11"
+dependencies = [
+ "getrandom",
+ "hmac",
+ "refineid-auth",
+ "sha2",
+ "subtle",
  "zeroize",
 ]
 
