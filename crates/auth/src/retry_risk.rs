@@ -16,11 +16,12 @@
 //!
 //! FINEID PINs allow five attempts before locking. The risk states
 //! below map the live retry counter to a severity, and the permission
-//! predicates encode the floors different surfaces stop at: a
-//! compatibility module and ordinary interfaces refuse to spend a PIN
-//! below three remaining attempts, so a lockout is never this software's
-//! doing, and a reusable authentication cache requires a pristine
-//! five-attempt state.
+//! predicates encode one floor: refuse to spend a PIN at one or two
+//! attempts remaining, so this software never spends the next-to-last
+//! or last attempt and a lockout is never its doing. Every other state
+//! passes, including a zero-attempt card -- nothing left to protect.
+//! Arming a reusable authentication cache is separate and stricter: it
+//! requires a pristine five-attempt state.
 
 use refineid_apdu::PinRetries;
 
@@ -44,7 +45,7 @@ pub enum PinRetryRisk {
     DisturbanceDetected,
     /// Three attempts remain: a security incident is declared.
     SecurityIncidentDeclared,
-    /// Two attempts remain: only an authorized expert may proceed.
+    /// Two attempts remain: the blocked band -- no PIN is spent here.
     CriticalThreatLevel,
     /// One attempt remains: a credential lockout is imminent.
     LockdownImminent,
@@ -68,43 +69,29 @@ impl PinRetryRisk {
         }
     }
 
-    /// The compatibility module spends PIN1 only at five, four, or three
-    /// attempts. The last two are left for another middleware to spend,
-    /// so a lockout is never this software's doing.
+    /// The one blocked band is one or two attempts remaining; every other
+    /// state passes, including an already-locked card. Refusing exactly
+    /// `{1, 2}` keeps this software from spending the next-to-last or last
+    /// attempt, so a lockout is never its doing.
     #[must_use]
     pub const fn permits_compatibility_module(self) -> bool {
-        matches!(
-            self,
-            Self::NormalOperatingConditions
-                | Self::DisturbanceDetected
-                | Self::SecurityIncidentDeclared
-        )
+        !matches!(self, Self::CriticalThreatLevel | Self::LockdownImminent)
     }
 
-    /// Ordinary graphical and system interfaces spend down to three
-    /// attempts.
+    /// Ordinary graphical and system interfaces block the same one-or-two
+    /// band and pass everything else. See
+    /// [`Self::permits_compatibility_module`].
     #[must_use]
     pub const fn permits_consumer(self) -> bool {
-        matches!(
-            self,
-            Self::NormalOperatingConditions
-                | Self::DisturbanceDetected
-                | Self::SecurityIncidentDeclared
-        )
+        !matches!(self, Self::CriticalThreatLevel | Self::LockdownImminent)
     }
 
     /// A reusable authentication cache requires a pristine five-attempt
-    /// state.
+    /// state -- a separate, stricter gate for arming the cache, not the
+    /// operate floor.
     #[must_use]
     pub const fn permits_reusable_cache(self) -> bool {
         matches!(self, Self::NormalOperatingConditions)
-    }
-
-    /// One or two remaining attempts require an explicit expert
-    /// confirmation.
-    #[must_use]
-    pub const fn requires_expert_confirmation(self) -> bool {
-        matches!(self, Self::CriticalThreatLevel | Self::LockdownImminent)
     }
 }
 
@@ -188,12 +175,16 @@ mod tests {
     fn the_floors_follow_the_ladder() {
         assert!(PinRetryRisk::NormalOperatingConditions.permits_reusable_cache());
         assert!(!PinRetryRisk::DisturbanceDetected.permits_reusable_cache());
+        // The operate floor passes every state except one or two attempts,
+        // including an already-locked card.
         assert!(PinRetryRisk::SecurityIncidentDeclared.permits_compatibility_module());
+        assert!(PinRetryRisk::DefencesFallen.permits_compatibility_module());
         assert!(!PinRetryRisk::CriticalThreatLevel.permits_compatibility_module());
+        assert!(!PinRetryRisk::LockdownImminent.permits_compatibility_module());
         assert!(PinRetryRisk::SecurityIncidentDeclared.permits_consumer());
+        assert!(PinRetryRisk::DefencesFallen.permits_consumer());
         assert!(!PinRetryRisk::CriticalThreatLevel.permits_consumer());
-        assert!(PinRetryRisk::LockdownImminent.requires_expert_confirmation());
-        assert!(!PinRetryRisk::DefencesFallen.requires_expert_confirmation());
+        assert!(!PinRetryRisk::LockdownImminent.permits_consumer());
     }
 
     #[test]
@@ -207,7 +198,10 @@ mod tests {
         assert!(!pin1_status_permits_consumer_authentication(remaining(
             RETRIES_BELOW_FLOOR
         )));
-        assert!(!pin1_status_permits_consumer_authentication(remaining(0)));
+        assert!(!pin1_status_permits_consumer_authentication(remaining(1)));
+        // Zero attempts passes the floor -- nothing left to protect; the card
+        // surfaces its locked state instead.
+        assert!(pin1_status_permits_consumer_authentication(remaining(0)));
         assert!(pin1_status_permits_consumer_authentication(
             PinStatus::Verified
         ));
