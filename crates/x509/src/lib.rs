@@ -130,6 +130,60 @@ impl<'a> Spki<'a> {
     }
 }
 
+/// The RSA modulus and public exponent read from a SubjectPublicKeyInfo,
+/// as big-endian minimal bytes with the DER INTEGER sign byte removed. Only
+/// [`extract_rsa_public_key`] builds one, so the bytes are trusted by
+/// construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RsaPublicKey<'a> {
+    modulus: &'a [u8],
+    exponent: &'a [u8],
+}
+
+impl RsaPublicKey<'_> {
+    /// The modulus, big-endian, with the DER INTEGER sign byte removed.
+    #[must_use]
+    pub const fn modulus(&self) -> &[u8] {
+        self.modulus
+    }
+
+    /// The public exponent, big-endian, with the DER INTEGER sign byte
+    /// removed.
+    #[must_use]
+    pub const fn exponent(&self) -> &[u8] {
+        self.exponent
+    }
+}
+
+/// Extract the RSA modulus and public exponent from a SubjectPublicKeyInfo.
+///
+/// `spki_der` is the DER of one SubjectPublicKeyInfo SEQUENCE, such as the
+/// bytes [`Spki::der`] returns. The algorithm identifier must be
+/// `rsaEncryption` or `id-RSASSA-PSS`; the returned modulus and exponent are
+/// big-endian minimal bytes with the DER INTEGER sign byte removed.
+///
+/// # Errors
+///
+/// [`X509Error::UnsupportedAlgorithm`] when the key is not RSA, or
+/// [`X509Error`] when the DER is malformed.
+pub fn extract_rsa_public_key(spki_der: &[u8]) -> Result<RsaPublicKey<'_>, X509Error> {
+    let spki = sequence(spki_der)?;
+    let spki_value = spki.value();
+
+    let algorithm = child(spki_value, 0)?;
+    expect_tag(algorithm, TAG_SEQUENCE)?;
+    let algorithm_oid = child(algorithm.value(), 0)?;
+    expect_tag(algorithm_oid, TAG_OID)?;
+    let oid = algorithm_oid.value();
+    if oid != OID_RSA_ENCRYPTION && oid != OID_RSASSA_PSS {
+        return Err(X509Error::UnsupportedAlgorithm);
+    }
+
+    let subject_public_key = child(spki_value, 1)?;
+    expect_tag(subject_public_key, TAG_BIT_STRING)?;
+    parse_rsa_public_key(subject_public_key.value())
+}
+
 /// Classify the key from a SubjectPublicKeyInfo value: an AlgorithmIdentifier
 /// SEQUENCE followed by the subjectPublicKey BIT STRING.
 fn classify(spki_value: &[u8]) -> Result<PublicKey, X509Error> {
@@ -162,6 +216,20 @@ fn classify(spki_value: &[u8]) -> Result<PublicKey, X509Error> {
 /// Read the modulus bit length from a subjectPublicKey BIT STRING that
 /// wraps a PKCS#1 RSAPublicKey.
 fn rsa_modulus_bits(bit_string_value: &[u8]) -> Result<usize, X509Error> {
+    let magnitude = parse_rsa_public_key(bit_string_value)?.modulus;
+    match magnitude.first() {
+        None => Ok(0),
+        Some(&top) => {
+            let full = magnitude.len().saturating_mul(u8::BITS as usize);
+            Ok(full - top.leading_zeros() as usize)
+        }
+    }
+}
+
+/// Parse the PKCS#1 `RSAPublicKey ::= SEQUENCE { modulus INTEGER,
+/// publicExponent INTEGER }` a subjectPublicKey BIT STRING wraps, returning
+/// both integers as big-endian magnitude bytes.
+fn parse_rsa_public_key(bit_string_value: &[u8]) -> Result<RsaPublicKey<'_>, X509Error> {
     // The BIT STRING opens with an unused-bits count, then the DER.
     let (_unused_bits, rsa_public_key_der) = bit_string_value
         .split_first()
@@ -169,19 +237,21 @@ fn rsa_modulus_bits(bit_string_value: &[u8]) -> Result<usize, X509Error> {
     let rsa_public_key = sequence(rsa_public_key_der)?;
     let modulus = child(rsa_public_key.value(), 0)?;
     expect_tag(modulus, TAG_INTEGER)?;
+    let exponent = child(rsa_public_key.value(), 1)?;
+    expect_tag(exponent, TAG_INTEGER)?;
+    Ok(RsaPublicKey {
+        modulus: integer_magnitude(modulus.value()),
+        exponent: integer_magnitude(exponent.value()),
+    })
+}
 
-    // A DER INTEGER carries a leading zero byte when the high bit would
-    // otherwise read as a sign; strip it to get the magnitude.
-    let magnitude = match modulus.value().split_first() {
+/// The big-endian magnitude of a DER INTEGER value. A DER INTEGER carries a
+/// leading zero byte when the high bit would otherwise read as a sign;
+/// strip it to leave the magnitude.
+fn integer_magnitude(integer_value: &[u8]) -> &[u8] {
+    match integer_value.split_first() {
         Some((&0, rest)) if !rest.is_empty() => rest,
-        _ => modulus.value(),
-    };
-    match magnitude.first() {
-        None => Ok(0),
-        Some(&top) => {
-            let full = magnitude.len().saturating_mul(u8::BITS as usize);
-            Ok(full - top.leading_zeros() as usize)
-        }
+        _ => integer_value,
     }
 }
 
@@ -269,6 +339,7 @@ mod tests {
     use super::{
         EcCurve, OID_EC_PUBLIC_KEY, OID_PRIME256V1, OID_RSA_ENCRYPTION, OID_SECP384R1, PublicKey,
         Spki, TAG_BIT_STRING, TAG_INTEGER, TAG_OID, TAG_SEQUENCE, TAG_VERSION, X509Error,
+        extract_rsa_public_key,
     };
     use refineid_ber::tlv;
 
@@ -417,6 +488,27 @@ mod tests {
         assert_eq!(
             Spki::from_certificate(&certificate),
             Err(X509Error::UnsupportedCurve)
+        );
+    }
+
+    #[test]
+    fn extracts_the_rsa_modulus_and_exponent() {
+        let spki = rsa_spki();
+        let key = extract_rsa_public_key(&spki).expect("parses");
+        // The DER modulus is the sign byte, MODULUS_TOP_BYTE, then filler;
+        // the magnitude drops the sign byte, keeping the RSA-3072 width and
+        // the high-bit-set top byte.
+        assert_eq!(key.modulus().len(), RSA_3072_BYTES);
+        assert_eq!(key.modulus().first(), Some(&MODULUS_TOP_BYTE));
+        // The exponent has no sign byte, so it is returned unchanged.
+        assert_eq!(key.exponent(), EXPONENT_65537);
+    }
+
+    #[test]
+    fn rejects_a_non_rsa_key() {
+        assert_eq!(
+            extract_rsa_public_key(&ec_spki(OID_PRIME256V1)),
+            Err(X509Error::UnsupportedAlgorithm)
         );
     }
 }
