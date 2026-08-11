@@ -84,3 +84,79 @@ impl<Alg> Signature<Alg> {
         self.bytes.is_empty()
     }
 }
+
+/// Ciphertext bytes bound to the algorithm that produced them.
+///
+/// The card's RSA decipher takes a cryptogram; binding it to its scheme
+/// keeps a `Ciphertext<RsaPkcs1>` from being handed where a different
+/// scheme's bytes are expected. Length is mode-dependent, so the bytes stay
+/// a `Vec<u8>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ciphertext<Alg> {
+    bytes: Vec<u8>,
+    algorithm: PhantomData<fn() -> Alg>,
+}
+
+impl<Alg> Ciphertext<Alg> {
+    /// Wrap raw ciphertext bytes.
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            algorithm: PhantomData,
+        }
+    }
+
+    /// Borrow the ciphertext bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume into the owned ciphertext bytes.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+
+    /// Ciphertext length in bytes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// `true` when the ciphertext is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Ciphertext, RsaPkcs1};
+
+    /// Length of the synthetic ciphertext used below. The container does
+    /// not interpret its bytes, so any nonzero length exercises the
+    /// accessors.
+    const SAMPLE_LEN: usize = 8;
+    /// Arbitrary fill byte for the synthetic ciphertext bytes.
+    const SAMPLE_BYTE: u8 = 0xAB;
+
+    #[test]
+    fn ciphertext_round_trips_through_accessors() {
+        let bytes = vec![SAMPLE_BYTE; SAMPLE_LEN];
+        let ciphertext = Ciphertext::<RsaPkcs1>::new(bytes.clone());
+        assert_eq!(ciphertext.len(), SAMPLE_LEN);
+        assert!(!ciphertext.is_empty());
+        assert_eq!(ciphertext.as_bytes(), bytes.as_slice());
+        assert_eq!(ciphertext.into_bytes(), bytes);
+    }
+
+    #[test]
+    fn empty_ciphertext_reports_empty() {
+        let ciphertext = Ciphertext::<RsaPkcs1>::new(Vec::new());
+        assert!(ciphertext.is_empty());
+        assert_eq!(ciphertext.len(), 0);
+    }
+}

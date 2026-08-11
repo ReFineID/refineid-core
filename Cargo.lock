@@ -302,6 +302,13 @@ name = "refineid-ber"
 version = "26.8.11"
 
 [[package]]
+name = "refineid-digest"
+version = "26.8.11"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
 name = "refineid-pace"
 version = "26.8.11"
 dependencies = [

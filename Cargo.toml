@@ -5,6 +5,7 @@ members = [
     "crates/atr",
     "crates/auth",
     "crates/ber",
+    "crates/digest",
     "crates/pace",
     "crates/pkcs15",
     "crates/sign",

@@ -47,7 +47,9 @@ use commands::{
     DecipherAlgRef, ExternalHashValue, MseSet, MseSetCt, PsoComputeDigitalSignature, PsoDecipher,
     PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef, expected_length_le,
 };
-pub use container::{EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, RsaPssSha256, Signature};
+pub use container::{
+    Ciphertext, EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, RsaPssSha256, Signature,
+};
 
 /// PKCS#15 key reference for the authentication key (PIN1-gated).
 pub const KEY_REF_AUTH: u8 = 0x01;
