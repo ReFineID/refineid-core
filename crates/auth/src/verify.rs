@@ -27,8 +27,9 @@
 //! operation that would burn a retry on a wrong PIN.
 
 use refineid_apdu::{
-    ApduClass, CardTransport, CommandApdu, CommandHeader, CredentialBody, CredentialBodyError,
-    CredentialCommand, PinRetries, StatusWord, TransportOutcome,
+    ApduClass, CREDENTIAL_BODY_MAX, CardTransport, CommandApdu, CommandHeader, CredentialBody,
+    CredentialBodyError, CredentialCommand, PinRetries, StatusWord, TransportOutcome,
+    UnvalidatedCredentialBlock,
 };
 
 use crate::credentials::{Pin1, Pin2};
@@ -250,8 +251,11 @@ pub(crate) const CREDENTIAL_BODY_SCRATCH: usize = 2 * PIN_STORED_LENGTH;
 pub(crate) fn write_credential_blocks(
     scheme: PinReferenceScheme,
     groups: &[&[u8]],
-    out: &mut [u8; CREDENTIAL_BODY_SCRATCH],
+    out: &mut [u8; CREDENTIAL_BODY_MAX],
 ) -> usize {
+    // The two stored-length blocks this assembles must fit the wire
+    // credential body buffer the transport layer holds.
+    const { assert!(CREDENTIAL_BODY_SCRATCH <= CREDENTIAL_BODY_MAX) };
     let mut total = 0;
     for group in groups {
         let copy_len = group.len().min(PIN_STORED_LENGTH);
@@ -293,9 +297,14 @@ pub(crate) fn credential_exchange<T: CardTransport + ?Sized>(
             }
         }
     }
-    let mut block = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
-    let total = write_credential_blocks(scheme, groups, &mut block);
-    let body = match CredentialBody::take_from(&mut block[..total]) {
+    // The block owns the assembled credential octets in a zeroizing
+    // buffer. Pre-fill it with the pad byte so the citizen padding falls
+    // out of the untouched tail, as `write_credential_blocks` expects.
+    let mut block = UnvalidatedCredentialBlock::zeroed();
+    block.buffer().fill(PIN_PAD_BYTE);
+    let total = write_credential_blocks(scheme, groups, block.buffer());
+    block.set_filled(total);
+    let body = match CredentialBody::from_block(block) {
         Ok(body) => body,
         Err(error) => return Err(AuthError::Command(error)),
     };
@@ -502,10 +511,10 @@ impl<T: CardTransport + ?Sized> PinOps for T {}
 #[cfg(test)]
 mod tests {
     use super::{
-        CREDENTIAL_BODY_SCRATCH, PIN_PAD_BYTE, PIN_STORED_LENGTH, PIN1_REFERENCE,
-        PIN1_REFERENCE_ORGANIZATIONAL, PinOps, PinReferenceScheme, PinSlot, PinStatus, VERIFY_INS,
-        VERIFY_P1, VerifyOutcome, classify_pin_status_sw, classify_verify_sw,
-        write_credential_blocks,
+        CREDENTIAL_BODY_MAX, CREDENTIAL_BODY_SCRATCH, PIN_PAD_BYTE, PIN_STORED_LENGTH,
+        PIN1_REFERENCE, PIN1_REFERENCE_ORGANIZATIONAL, PinOps, PinReferenceScheme, PinSlot,
+        PinStatus, VERIFY_INS, VERIFY_P1, VerifyOutcome, classify_pin_status_sw,
+        classify_verify_sw, write_credential_blocks,
     };
     use crate::credentials::{Pin1, UnvalidatedSecret};
     use refineid_apdu::{
@@ -649,7 +658,7 @@ mod tests {
 
     #[test]
     fn citizen_block_pads_and_organizational_block_stays_typed_length() {
-        let mut citizen = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
+        let mut citizen = [PIN_PAD_BYTE; CREDENTIAL_BODY_MAX];
         let citizen_total =
             write_credential_blocks(PinReferenceScheme::Citizen, &[b"1234"], &mut citizen);
         assert_eq!(citizen_total, PIN_STORED_LENGTH);
@@ -660,7 +669,7 @@ mod tests {
                 .all(|&byte| byte == PIN_PAD_BYTE)
         );
 
-        let mut organizational = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
+        let mut organizational = [PIN_PAD_BYTE; CREDENTIAL_BODY_MAX];
         let org_total = write_credential_blocks(
             PinReferenceScheme::Organizational,
             &[b"1234"],
@@ -672,7 +681,7 @@ mod tests {
 
     #[test]
     fn a_two_block_citizen_body_pads_each_block_to_the_stored_length() {
-        let mut body = [PIN_PAD_BYTE; CREDENTIAL_BODY_SCRATCH];
+        let mut body = [PIN_PAD_BYTE; CREDENTIAL_BODY_MAX];
         let total = write_credential_blocks(
             PinReferenceScheme::Citizen,
             &[b"1234", b"567890"],

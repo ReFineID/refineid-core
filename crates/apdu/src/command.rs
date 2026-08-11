@@ -23,7 +23,7 @@
 //! operation.
 
 use core::fmt;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::ZeroizeOnDrop;
 
 /// ISO 7816-4 short-form command header length: CLA, INS, P1, P2.
 pub const APDU_HEADER_LEN: usize = 4;
@@ -342,12 +342,70 @@ impl fmt::Display for CredentialBodyError {
 
 impl core::error::Error for CredentialBodyError {}
 
+/// Unvalidated credential octets on their way to becoming a
+/// [`CredentialBody`], owned in a zeroizing fixed-capacity buffer.
+///
+/// This is the single nominal border for raw credential bytes: an
+/// assembler takes a zeroed block, writes the credential octets into its
+/// [`buffer`](Self::buffer), records how many with
+/// [`set_filled`](Self::set_filled), and hands the whole block to
+/// [`CredentialBody::from_block`], which validates and takes custody. The
+/// buffer erases on drop, so a block that is abandoned or rejected leaves
+/// no residue, and no `&mut [u8]` seam carries the raw bytes across the
+/// validation border. The type is not `Clone`, not `Copy`, and not
+/// raw-debuggable.
+#[derive(ZeroizeOnDrop)]
+pub struct UnvalidatedCredentialBlock {
+    /// Fixed-capacity storage; only the first `length` bytes are meant to
+    /// be credential data once the assembler has filled them.
+    bytes: [u8; CREDENTIAL_BODY_MAX],
+    /// Count of leading octets the assembler declared as credential data.
+    length: usize,
+}
+
+impl Default for UnvalidatedCredentialBlock {
+    fn default() -> Self {
+        Self::zeroed()
+    }
+}
+
+impl UnvalidatedCredentialBlock {
+    /// A zeroed block for an assembler to fill in place.
+    #[must_use]
+    pub const fn zeroed() -> Self {
+        Self {
+            bytes: [0_u8; CREDENTIAL_BODY_MAX],
+            length: 0,
+        }
+    }
+
+    /// The writable octet buffer. The assembler writes the credential
+    /// octets from the start and then declares their count with
+    /// [`set_filled`](Self::set_filled).
+    pub const fn buffer(&mut self) -> &mut [u8; CREDENTIAL_BODY_MAX] {
+        &mut self.bytes
+    }
+
+    /// Declare how many leading octets are credential data. A count past
+    /// the buffer is preserved verbatim and rejected by
+    /// [`CredentialBody::from_block`] rather than silently truncated.
+    pub const fn set_filled(&mut self, length: usize) {
+        self.length = length;
+    }
+}
+
+impl fmt::Debug for UnvalidatedCredentialBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("UnvalidatedCredentialBlock([redacted])")
+    }
+}
+
 /// Validated data field of one credential command.
 ///
-/// Construction takes custody: the source buffer is zeroized on every
-/// path, so the caller's raw credential representation is destroyed at the
-/// boundary. The type is not `Clone`, not `Copy`, not raw-debuggable, and
-/// zeroizes its own storage on drop.
+/// Construction takes custody from an [`UnvalidatedCredentialBlock`],
+/// which erases its own buffer on drop, so no raw credential representation
+/// lingers beside the typed body. The type is not `Clone`, not `Copy`, not
+/// raw-debuggable, and zeroizes its own storage on drop.
 #[derive(ZeroizeOnDrop)]
 pub struct CredentialBody {
     /// Fixed-capacity storage; only the first `length` bytes are wire
@@ -358,34 +416,30 @@ pub struct CredentialBody {
 }
 
 impl CredentialBody {
-    /// Take custody of credential data. Copies the bytes into
-    /// fixed-capacity storage and zeroizes `source` before returning,
-    /// on the success path and on every error path.
+    /// Take custody of an assembled credential block. Validates the
+    /// declared length and copies the credential octets into fixed-capacity
+    /// storage; the block's own buffer erases when it drops at the end of
+    /// this call.
     ///
     /// # Errors
     ///
-    /// Returns [`CredentialBodyError`] when `source` is empty or exceeds
-    /// [`CREDENTIAL_BODY_MAX`] bytes.
-    pub fn take_from(source: &mut [u8]) -> Result<Self, CredentialBodyError> {
-        if source.is_empty() {
+    /// Returns [`CredentialBodyError::Empty`] when the block declares no
+    /// octets, or [`CredentialBodyError::TooLong`] when it declares more
+    /// than [`CREDENTIAL_BODY_MAX`].
+    pub fn from_block(block: UnvalidatedCredentialBlock) -> Result<Self, CredentialBodyError> {
+        let declared = block.length;
+        if declared == 0 {
             return Err(CredentialBodyError::Empty);
         }
-        if source.len() > CREDENTIAL_BODY_MAX {
-            let got = source.len();
-            source.zeroize();
-            return Err(CredentialBodyError::TooLong { got });
+        if declared > CREDENTIAL_BODY_MAX {
+            return Err(CredentialBodyError::TooLong { got: declared });
         }
-        let length = match u8::try_from(source.len()) {
-            Ok(length) => length,
-            Err(_) => {
-                let got = source.len();
-                source.zeroize();
-                return Err(CredentialBodyError::TooLong { got });
-            }
-        };
+        // The guard above bounds the conversion and the slice; the fallible
+        // form keeps an `as` cast from silently truncating the length.
+        let length = u8::try_from(declared)
+            .map_err(|_overflow| CredentialBodyError::TooLong { got: declared })?;
         let mut bytes = [0_u8; CREDENTIAL_BODY_MAX];
-        bytes[..source.len()].copy_from_slice(source);
-        source.zeroize();
+        bytes[..declared].copy_from_slice(&block.bytes[..declared]);
         Ok(Self { bytes, length })
     }
 
@@ -527,8 +581,17 @@ mod tests {
     use super::{
         APDU_HEADER_LEN, ApduClass, CREDENTIAL_APDU_MAX, CREDENTIAL_BODY_MAX, CREDENTIAL_WIRE_MAX,
         CommandApdu, CommandDataError, CommandHeader, CredentialBody, CredentialBodyError,
-        CredentialCommand, LC_LEN, LE_LEN, SHORT_APDU_DATA_MAX,
+        CredentialCommand, LC_LEN, LE_LEN, SHORT_APDU_DATA_MAX, UnvalidatedCredentialBlock,
     };
+
+    /// Assemble a credential block from octets that fit the capacity, for
+    /// the border tests.
+    fn credential_block(octets: &[u8]) -> UnvalidatedCredentialBlock {
+        let mut block = UnvalidatedCredentialBlock::zeroed();
+        block.buffer()[..octets.len()].copy_from_slice(octets);
+        block.set_filled(octets.len());
+        block
+    }
 
     /// Synthetic instruction byte for shape tests. The value has no
     /// protocol meaning; command semantics are out of scope here.
@@ -698,46 +761,42 @@ mod tests {
     }
 
     #[test]
-    fn credential_body_takes_custody_and_zeroizes_the_source() {
-        let mut source = [TEST_P1, TEST_P2, TEST_LE];
-        let body = CredentialBody::take_from(&mut source).expect("fixture length is valid");
-        assert_eq!(body.len(), source.len());
+    fn credential_body_takes_custody_of_a_block() {
+        let octets = [TEST_P1, TEST_P2, TEST_LE];
+        let body =
+            CredentialBody::from_block(credential_block(&octets)).expect("fixture length is valid");
+        assert_eq!(body.len(), octets.len());
         assert!(!body.is_empty());
-        assert!(
-            source.iter().all(|byte| *byte == 0),
-            "source must be zeroized after custody transfer"
-        );
     }
 
     #[test]
     fn credential_body_boundaries_are_enforced() {
-        let mut empty: [u8; 0] = [];
         assert!(matches!(
-            CredentialBody::take_from(&mut empty),
+            CredentialBody::from_block(UnvalidatedCredentialBlock::zeroed()),
             Err(CredentialBodyError::Empty)
         ));
 
-        let mut max = [TEST_P1; CREDENTIAL_BODY_MAX];
-        assert!(CredentialBody::take_from(&mut max).is_ok());
+        let full = [TEST_P1; CREDENTIAL_BODY_MAX];
+        assert!(CredentialBody::from_block(credential_block(&full)).is_ok());
 
-        let mut over = [TEST_P1; OVER_CREDENTIAL_CAPACITY];
+        // A block that declares more octets than fit is refused, not read
+        // out of bounds and not truncated.
+        let mut over = UnvalidatedCredentialBlock::zeroed();
+        over.set_filled(OVER_CREDENTIAL_CAPACITY);
         assert!(matches!(
-            CredentialBody::take_from(&mut over),
+            CredentialBody::from_block(over),
             Err(CredentialBodyError::TooLong {
                 got: OVER_CREDENTIAL_CAPACITY
             })
         ));
-        assert!(
-            over.iter().all(|byte| *byte == 0),
-            "source must be zeroized on the error path"
-        );
     }
 
     #[test]
     fn credential_command_assembles_a_case_3_wire_shape() {
-        let mut source = [TEST_P1, TEST_P2];
-        let data_len = source.len();
-        let body = CredentialBody::take_from(&mut source).expect("fixture length is valid");
+        let octets = [TEST_P1, TEST_P2];
+        let data_len = octets.len();
+        let body =
+            CredentialBody::from_block(credential_block(&octets)).expect("fixture length is valid");
         let command = CredentialCommand::assemble(header(), body);
         assert_eq!(command.len(), APDU_HEADER_LEN + LC_LEN + data_len);
         assert!(!command.is_empty());
@@ -746,15 +805,20 @@ mod tests {
         command.expose_wire(|wire| {
             let mut expected = expected_prefix();
             expected.push(u8::try_from(data_len).expect("fixture data fits an Lc byte"));
-            expected.extend_from_slice(&[TEST_P1, TEST_P2]);
+            expected.extend_from_slice(&octets);
             assert_eq!(wire, expected.as_slice());
         });
     }
 
     #[test]
     fn credential_types_debug_is_always_redacted() {
-        let mut source = [TEST_P1, TEST_P2];
-        let body = CredentialBody::take_from(&mut source).expect("fixture length is valid");
+        assert_eq!(
+            format!("{:?}", UnvalidatedCredentialBlock::zeroed()),
+            "UnvalidatedCredentialBlock([redacted])"
+        );
+
+        let body = CredentialBody::from_block(credential_block(&[TEST_P1, TEST_P2]))
+            .expect("fixture length is valid");
         assert_eq!(format!("{body:?}"), "CredentialBody([redacted])");
 
         let command = CredentialCommand::assemble(header(), body);

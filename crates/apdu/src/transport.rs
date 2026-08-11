@@ -212,6 +212,7 @@ mod tests {
     use super::{CardTransport, ResponseApdu, TransportErrorKind, TransportOutcome};
     use crate::command::{
         ApduClass, CommandApdu, CommandHeader, CredentialBody, CredentialCommand,
+        UnvalidatedCredentialBlock,
     };
     use crate::status_word::StatusWord;
 
@@ -338,9 +339,12 @@ mod tests {
 
     #[test]
     fn credential_transmit_consumes_the_command() {
-        let mut source = [TEST_P1, TEST_P2];
-        let body_len = source.len();
-        let body = CredentialBody::take_from(&mut source).expect("fixture length is valid");
+        let octets = [TEST_P1, TEST_P2];
+        let body_len = octets.len();
+        let mut block = UnvalidatedCredentialBlock::zeroed();
+        block.buffer()[..octets.len()].copy_from_slice(&octets);
+        block.set_filled(octets.len());
+        let body = CredentialBody::from_block(block).expect("fixture length is valid");
         let command = CredentialCommand::assemble(header(), body);
         let wire_len = command.len();
 

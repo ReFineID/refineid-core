@@ -40,7 +40,7 @@ pub mod transport;
 pub use command::{
     APDU_HEADER_LEN, ApduClass, CREDENTIAL_APDU_MAX, CREDENTIAL_BODY_MAX, CREDENTIAL_WIRE_MAX,
     CommandApdu, CommandDataError, CommandHeader, CredentialBody, CredentialBodyError,
-    CredentialCommand, SHORT_APDU_DATA_MAX,
+    CredentialCommand, SHORT_APDU_DATA_MAX, UnvalidatedCredentialBlock,
 };
 pub use primitives::{Aid, AidError, FileId, Sfi, SfiError};
 pub use status_word::{PinRetries, StatusWord};
@@ -68,7 +68,7 @@ mod public_contract_tests {
     use serde::{Serialize, de::DeserializeOwned};
     use zeroize::{Zeroize, ZeroizeOnDrop};
 
-    use super::{CommandApdu, CredentialBody, CredentialCommand};
+    use super::{CommandApdu, CredentialBody, CredentialCommand, UnvalidatedCredentialBlock};
 
     trait AmbiguousIfImplemented<Disambiguator, Marker> {
         fn marker() {}
@@ -116,6 +116,18 @@ mod public_contract_tests {
         let _ = <CredentialCommand as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
         let _ = <CredentialCommand as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
         let _ = <CredentialCommand as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
+
+        // The unvalidated border owns raw credential octets before the body
+        // takes custody, so it must erase on drop and never be duplicated,
+        // serialised, or rendered raw.
+        require_zeroize_on_drop::<UnvalidatedCredentialBlock>();
+        let _ = <UnvalidatedCredentialBlock as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <UnvalidatedCredentialBlock as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <UnvalidatedCredentialBlock as AmbiguousIfImplemented<_, ZeroizeMarker>>::marker;
+        let _ = <UnvalidatedCredentialBlock as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ =
+            <UnvalidatedCredentialBlock as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+        let _ = <UnvalidatedCredentialBlock as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
     }
 
     #[test]
