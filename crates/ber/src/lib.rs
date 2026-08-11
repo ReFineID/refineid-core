@@ -197,6 +197,9 @@ pub enum BerError {
     /// The length octet demanded a form above the four-byte long form,
     /// or the indefinite-length marker.
     UnsupportedLengthForm,
+    /// The tag ran to three or more octets; this crate frames only one-
+    /// and two-octet tags.
+    UnsupportedTagForm,
     /// Tag mismatch when promoting an untyped TLV to a typed one.
     UnexpectedTag {
         /// The tag the typed marker requires.
@@ -212,6 +215,7 @@ impl fmt::Display for BerError {
             Self::Empty => f.write_str("BER: empty input"),
             Self::Truncated => f.write_str("BER: truncated input"),
             Self::UnsupportedLengthForm => f.write_str("BER: length form not supported"),
+            Self::UnsupportedTagForm => f.write_str("BER: tag form not supported"),
             Self::UnexpectedTag { expected, got } => {
                 write!(f, "BER: expected tag {expected:#X}, got {got:#X}")
             }
@@ -331,6 +335,10 @@ impl<'a> BerTlvAny<'a> {
         /// Low five bits all set in the first tag byte mean the tag
         /// continues in the next byte.
         const MULTI_BYTE_TAG_MASK: u8 = 0x1F;
+        /// Bit 8 set in a subsequent tag octet means another octet follows
+        /// (X.690 section 8.1.2.4.2 c); this crate frames only one- and
+        /// two-octet tags, so a set bit is out of scope.
+        const TAG_MORE_OCTETS: u8 = 0x80;
 
         let mut idx: usize = 0;
         let mut next = |label_first_byte: bool| -> Result<u8, BerError> {
@@ -349,6 +357,9 @@ impl<'a> BerTlvAny<'a> {
         let first = next(true)?;
         let tag: u16 = if first & MULTI_BYTE_TAG_MASK == MULTI_BYTE_TAG_MASK {
             let second = next(false)?;
+            if second & TAG_MORE_OCTETS != 0 {
+                return Err(BerError::UnsupportedTagForm);
+            }
             (u16::from(first) << u8::BITS) | u16::from(second)
         } else {
             u16::from(first)
@@ -358,7 +369,7 @@ impl<'a> BerTlvAny<'a> {
         const LENGTH_OCTET_COUNT_MASK: u8 = 0x0F;
 
         let len_first = next(false)?;
-        let length: usize = if len_first < LONG_FORM_1B {
+        let length: usize = if usize::from(len_first) < SHORT_FORM_CEILING {
             usize::from(len_first)
         } else {
             let nbytes: usize = match len_first {
@@ -624,6 +635,33 @@ mod tests {
         assert!(matches!(
             BerTlvAny::parse(&buf),
             Err(BerError::UnsupportedLengthForm)
+        ));
+    }
+
+    #[test]
+    fn rejects_the_indefinite_length_marker() {
+        // X.690 section 8.1.3.6: a length octet with bit 8 set and no
+        // count is the indefinite form, forbidden here -- it must not be
+        // read as a short length.
+        const INDEFINITE_LENGTH_MARKER: u8 = 0x80;
+        let buf = [TAG_CONTEXT_0, INDEFINITE_LENGTH_MARKER, FILLER];
+        assert!(matches!(
+            BerTlvAny::parse(&buf),
+            Err(BerError::UnsupportedLengthForm)
+        ));
+    }
+
+    #[test]
+    fn rejects_a_three_octet_tag() {
+        // First octet marks a multi-octet tag; the second octet's bit 8
+        // (X.690 section 8.1.2.4.2 c) claims a third octet this crate does
+        // not frame.
+        const MULTI_BYTE_TAG_LEADER: u8 = 0x7F;
+        const TAG_CONTINUES: u8 = 0x81;
+        let buf = [MULTI_BYTE_TAG_LEADER, TAG_CONTINUES, TAG_CONTEXT_0, FILLER];
+        assert!(matches!(
+            BerTlvAny::parse(&buf),
+            Err(BerError::UnsupportedTagForm)
         ));
     }
 
