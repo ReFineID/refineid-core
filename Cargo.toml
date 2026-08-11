@@ -7,6 +7,7 @@ members = [
     "crates/pace",
     "crates/pkcs15",
     "crates/sign",
+    "crates/x509",
     "tools/xtask",
 ]
 
@@ -21,6 +22,7 @@ repository = "https://github.com/ReFineID/refineid-core"
 [workspace.dependencies]
 refineid-apdu = { path = "crates/apdu" }
 refineid-ber = { path = "crates/ber" }
+refineid-x509 = { path = "crates/x509" }
 aes = "0.9"
 cbc = "0.2"
 cmac = "0.8"

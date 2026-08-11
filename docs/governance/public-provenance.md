@@ -115,6 +115,16 @@ deployment details.
   specifications (S1 section 3.9 and the confidentiality-template table)
   and ISO/IEC 7816-4 and -8. Secret, personal-information, protocol, and
   dependency scans were performed for this slice.
+- **Certificate public key.** Publication under Apache-2.0 directed on
+  2026-08-11 for the `refineid-x509` slice: `Spki::from_certificate`,
+  which extracts and classifies the SubjectPublicKeyInfo of a certificate
+  and exposes its DER. Only the public key is parsed; full X.509 stays
+  out of the core, and the DER walk reuses `refineid-ber` rather than a
+  new dependency. Reconstructed against the standards and covered by unit
+  tests over synthetic certificates. Constants are traced to RFC 5280,
+  PKCS#1, and the object identifiers in RFC 5480 and RFC 8017. Secret,
+  personal-information, protocol, and dependency scans were performed for
+  this slice.
 
 Before a later slice is admitted, its review must record:
 

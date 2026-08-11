@@ -257,6 +257,19 @@ reference; its wire is traced to the FINEID S1 specification (section 3.9
 and the confidentiality-template table) and covered by scripted-transport
 tests. This slice is hardware-validated (see below).
 
+The eleventh slice admits a SubjectPublicKeyInfo layer in
+`refineid-x509`: `Spki::from_certificate` navigates a certificate's DER to
+the public key, classifies it -- RSA with its modulus size, or a NIST
+curve -- and exposes the SPKI bytes for a host verifier, pairing a
+certificate the read path returns with the right signing chain. It parses
+only the SubjectPublicKeyInfo; full X.509 -- validity, extensions,
+chains, and revocation -- stays out of the core, and the DER walk is
+built on `refineid-ber`, not a general parser, so no dependency is added.
+It is an offline parser, neither card-mutating nor retry-consuming, so it
+is admitted on unit tests over synthetic RSA-3072, P-384, and P-256
+certificates rather than a hardware observation. Constants are traced to
+RFC 5280, PKCS#1, and the object identifiers in RFC 5480 and RFC 8017.
+
 ## Hardware validation
 
 Slices two through five have been exercised against both shipped FINEID

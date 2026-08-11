@@ -32,9 +32,15 @@ crates stay transport-agnostic and country-profile-neutral.
   ECDSA signing chains, over both the citizen chain (PSO:HASH then an empty
   PSO:CDS) and the organizational chain (an inline-digest PSO:CDS), plus
   RSA decipher (PSO:DECIPHER over a command-chained cryptogram).
+- `crates/x509` (`refineid-x509`) -- SubjectPublicKeyInfo extraction from a
+  certificate: classifies the public key (RSA size, or a NIST curve) and
+  exposes the SPKI bytes, pairing a certificate with the right signing
+  chain. Not certificate validation.
 
-Planned work adds an X.509/SPKI layer over the certificates the read path
-returns.
+The crate family now covers a full FINEID card session: transport,
+reads, PACE, PIN operations, signing, decipher, and the certificate
+public key. Later work stays outside this core by design (platform
+integration, full X.509 with revocation, document-format signing).
 
 ## Security posture
 
