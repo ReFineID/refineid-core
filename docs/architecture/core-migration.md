@@ -238,7 +238,7 @@ encoding and no command chaining are involved, and two signatures over
 one digest differ. The reference and the specification's algorithm-
 reference table agree on the scheme byte; the wire is covered by
 scripted-transport tests, and the RSA keys live on the older card
-generation.
+generation. This slice is hardware-validated (see below).
 
 ## Hardware validation
 
@@ -262,6 +262,21 @@ data" response, so the adapter settles it on the credential path as
 well as the plain one; and on the contactless interface the card
 refuses the application selection before PACE, so the reset that
 precedes PACE on a dirty contact context is best-effort there.
+
+The ninth slice, RSASSA-PSS signing, has also been exercised on the
+older card over the contact interface: after a counter-safe PIN1 VERIFY
+with the correct PIN, the PIN1-gated authentication key produced a PSS
+signature over a SHA-256 digest, and that signature verified against the
+authentication certificate's RSA-3072 public key. The PIN1 counter read
+as five of five before and after, so nothing was consumed. This
+exercises the whole citizen signing choreography -- MSE:SET in the
+digital-signature template, PSO:HASH of the external SHA-256 digest, an
+empty PSO:COMPUTE DIGITAL SIGNATURE, and the modulus-wide signature
+returned through the adapter's response chaining -- which the PKCS#1
+chain shares byte for byte but for the algorithm reference. The
+signature-length check and the other signing chains (PKCS#1, ECDSA, and
+the organizational inline-digest form) remain covered by
+scripted-transport tests rather than a direct hardware observation.
 
 ## Quarantined until redesigned
 

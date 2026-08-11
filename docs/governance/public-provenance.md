@@ -97,10 +97,12 @@ deployment details.
   the pre-hashed choreography, so no new wire path was needed.
   Reconstructed against the private development tree's proven shapes and
   cross-checked against the behaviour reference and the specification's
-  algorithm-reference table. Constants are traced to the DVV FINEID
-  specifications (S1 section 3.6.3 Table 6) and ISO/IEC 7816-8. Secret,
-  personal-information, protocol, and dependency scans were performed for
-  this slice.
+  algorithm-reference table. Validated on hardware: the older card's
+  authentication key produced a PSS signature that verified against the
+  authentication certificate, with the PIN counter unconsumed. Constants
+  are traced to the DVV FINEID specifications (S1 section 3.6.3 Table 6)
+  and ISO/IEC 7816-8. Secret, personal-information, protocol, and
+  dependency scans were performed for this slice.
 
 Before a later slice is admitted, its review must record:
 
