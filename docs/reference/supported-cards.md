@@ -3,9 +3,12 @@
 The FINEID certificate cards DVV (formerly VRK) has issued, by
 manufacturer and platform version, with the FINEID specification each
 implements and the answer-to-reset (ATR, contact) and answer-to-select
-(ATS, contactless) each presents. The catalog and its byte values are from
-the DVV *Technology note -- DVV certificate card ATR/ATS bytes* (v1.0,
-2024-08-12); bytes are hexadecimal, most significant first.
+(ATS, contactless) each presents. Bytes are hexadecimal, most significant
+first.
+
+Source: DVV,
+[Technology note -- ATR bytes](https://dvv.fi/documents/16079645/17324992/Technology+note+-+ATR+bytes.pdf)
+(v1.0, 2024-08-12).
 
 These crates are generation-agnostic: they read and drive a card through
 the same commands, using the per-generation fallback variants the read and
