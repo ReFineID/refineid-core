@@ -317,6 +317,35 @@ pub(crate) fn credential_exchange<T: CardTransport + ?Sized>(
     Ok(response.status_word())
 }
 
+/// Assemble and send the VERIFY credential command for `slot` under
+/// `scheme`, classifying the card's status word.
+///
+/// Crate-private on purpose: the only entries to a VERIFY are the typed
+/// [`PinOps::verify_pin1`] and [`PinOps::verify_pin2`] family, which take a
+/// validated [`Pin1`] or [`Pin2`]. There is no public raw-digit VERIFY, so
+/// no caller outside this crate can present arbitrary bytes as a PIN and
+/// spend a retry on them.
+///
+/// # Errors
+///
+/// [`AuthError`] on an unsupported length, a command-assembly failure, a
+/// transport failure, or a transport state transition.
+pub(crate) fn verify_digits<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    scheme: PinReferenceScheme,
+    slot: PinSlot,
+    digits: &[u8],
+) -> Result<VerifyOutcome, AuthError<T::Error>> {
+    let header = CommandHeader {
+        class: ApduClass::Plain,
+        instruction: VERIFY_INS,
+        p1: VERIFY_P1,
+        p2: scheme.reference(slot),
+    };
+    let status = credential_exchange(transport, scheme, header, &[digits])?;
+    Ok(classify_verify_sw(status))
+}
+
 /// PIN management operations, layered as default methods on every
 /// [`CardTransport`].
 ///
@@ -372,7 +401,7 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        self.verify(scheme, PinSlot::Pin1, pin.digits())
+        verify_digits(self, scheme, PinSlot::Pin1, pin.digits())
     }
 
     /// VERIFY PIN2 under an explicit numbering.
@@ -388,7 +417,7 @@ pub trait PinOps: CardTransport {
     where
         Self: Sized,
     {
-        self.verify(scheme, PinSlot::Pin2, pin.digits())
+        verify_digits(self, scheme, PinSlot::Pin2, pin.digits())
     }
 
     /// Resolve the card's credential numbering with a counter-safe
@@ -478,31 +507,6 @@ pub trait PinOps: CardTransport {
             .into_response()
             .map_err(AuthError::Outcome)?;
         Ok(response.status_word())
-    }
-
-    /// Assemble and send the VERIFY credential command for `slot` under
-    /// `scheme`.
-    ///
-    /// # Errors
-    ///
-    /// As [`PinOps::verify_pin1_with_scheme`].
-    fn verify(
-        &mut self,
-        scheme: PinReferenceScheme,
-        slot: PinSlot,
-        digits: &[u8],
-    ) -> Result<VerifyOutcome, AuthError<Self::Error>>
-    where
-        Self: Sized,
-    {
-        let header = CommandHeader {
-            class: ApduClass::Plain,
-            instruction: VERIFY_INS,
-            p1: VERIFY_P1,
-            p2: scheme.reference(slot),
-        };
-        let status = credential_exchange(self, scheme, header, &[digits])?;
-        Ok(classify_verify_sw(status))
     }
 }
 
