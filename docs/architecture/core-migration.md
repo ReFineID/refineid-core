@@ -240,6 +240,23 @@ reference table agree on the scheme byte; the wire is covered by
 scripted-transport tests, and the RSA keys live on the older card
 generation. This slice is hardware-validated (see below).
 
+The tenth slice admits RSA decipher in `refineid-sign`, and the outgoing
+command chaining it needs in `refineid-apdu`:
+
+- `CommandApdu::command_chain` splits a data field larger than the short
+  form into a command-chained sequence, setting the chaining class on
+  every command but the last;
+- `decipher_rsa` sets the confidentiality template and ships the
+  modulus-wide cryptogram -- the padding-content indicator followed by
+  one modulus block -- through that chaining, returning the plaintext the
+  card recovers; `DecipherAlgRef` names the padding (PKCS#1 v1.5 or
+  RSAES-OAEP-SHA256).
+
+Unlike the other card private-key operations, decipher has no behaviour
+reference; its wire is traced to the FINEID S1 specification (section 3.9
+and the confidentiality-template table) and covered by scripted-transport
+tests. This slice is hardware-validated (see below).
+
 ## Hardware validation
 
 Slices two through five have been exercised against both shipped FINEID
@@ -275,6 +292,12 @@ byte but for the algorithm reference. The other signing chains (PKCS#1,
 ECDSA, and the organizational inline-digest form) remain covered by
 scripted-transport tests.
 
+RSA decipher (tenth slice) has also been exercised on the older card over
+contact: a message encrypted to the authentication certificate's public
+key was recovered by the card's decipher key, which validates the
+PSO:DECIPHER chain together with the command chaining that carries the
+modulus-wide cryptogram.
+
 ## Quarantined until redesigned
 
 The admitted APDU slice replaces the quarantined designs from the private
@@ -286,8 +309,6 @@ generic command types do not enter the public tree in any form.
 Still outside the public tree:
 
 - transport adapters until their custody and fault paths pass review;
-- PSO:DECIPHER, whose modulus-wide ciphertext needs outgoing command
-  chaining the apdu layer does not yet build;
 - automatic retry paths of any kind around credential commands; and
 - the legacy PIN cache.
 

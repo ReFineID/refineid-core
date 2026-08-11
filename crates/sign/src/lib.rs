@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Card-side signing for FINEID.
+//! Card-side signing and RSA decipher for FINEID.
 //!
 //! The card holds the private key and performs the private-key
 //! operation; the host computes the digest and drives the MANAGE
@@ -26,13 +26,17 @@
 //! these commands carry no credential material and use the plain
 //! transport path.
 //!
-//! The pre-hashed chains all fit the short-form command: RSASSA-PKCS1-v1_5
-//! and RSASSA-PSS over SHA-256 for the RSA keys, and ECDSA over P-384 for
-//! the newer keys. PSS is a card-native scheme -- the card applies the
-//! padding from the digest, so the choreography is the pre-hashed chain
-//! with a different algorithm reference, not a host-encoded block.
-//! PSO:DECIPHER, whose modulus-wide ciphertext needs command chaining,
-//! follows in a later slice.
+//! The pre-hashed signing chains all fit the short-form command:
+//! RSASSA-PKCS1-v1_5 and RSASSA-PSS over SHA-256 for the RSA keys, and
+//! ECDSA over P-384 for the newer keys. PSS is a card-native scheme -- the
+//! card applies the padding from the digest, so the choreography is the
+//! pre-hashed chain with a different algorithm reference, not a
+//! host-encoded block.
+//!
+//! RSA decipher is the other private-key operation here: `decipher_rsa`
+//! sets the confidentiality template and ships the modulus-wide cryptogram
+//! by command chaining (its data field exceeds the short form), and the
+//! card returns the recovered plaintext.
 
 pub mod commands;
 pub mod container;
@@ -40,8 +44,8 @@ pub mod container;
 use refineid_apdu::{CardTransport, CommandDataError, ResponseApdu, StatusWord, TransportOutcome};
 
 use commands::{
-    ExternalHashValue, MseSet, PsoComputeDigitalSignature, PsoHashExternal, SHA256_LEN, SHA384_LEN,
-    SignatureAlgRef,
+    DecipherAlgRef, ExternalHashValue, MseSet, MseSetCt, PsoComputeDigitalSignature, PsoDecipher,
+    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
 };
 pub use container::{EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, RsaPssSha256, Signature};
 
@@ -151,13 +155,13 @@ impl<E: core::fmt::Display> core::fmt::Display for SignError<E> {
 
 impl<E: core::fmt::Debug + core::fmt::Display + 'static> core::error::Error for SignError<E> {}
 
-/// Card-side signing operations, layered as default methods on every
-/// [`CardTransport`].
+/// Card-side private-key operations -- signing and RSA decipher --
+/// layered as default methods on every [`CardTransport`].
 ///
 /// Bring the trait into scope to use the methods; the blanket
 /// implementation applies to every transport, so a plain contact
 /// transport and a PACE secure-messaging transport both gain the same
-/// signing operations.
+/// operations.
 pub trait SignOps: CardTransport {
     /// Set the security environment for a signing key.
     ///
@@ -345,6 +349,47 @@ pub trait SignOps: CardTransport {
             });
         }
         Ok(Signature::new(bytes))
+    }
+
+    /// Decipher an RSA cryptogram with a card private key, returning the
+    /// recovered plaintext; the card strips the padding.
+    ///
+    /// The key's PIN must already be verified in the card session, and
+    /// `scheme` must be the family the session resolved. `algorithm` names
+    /// the padding the card expects (see [`DecipherAlgRef`]). The
+    /// modulus-wide cryptogram is shipped by command chaining, so the
+    /// caller need not manage extended-length APDUs.
+    ///
+    /// # Errors
+    ///
+    /// Transport failures, a state transition, or a non-success status
+    /// word at MSE:SET or any chained PSO:DECIPHER command.
+    fn decipher_rsa(
+        &mut self,
+        scheme: SignScheme,
+        key: KeyRef,
+        algorithm: DecipherAlgRef,
+        ciphertext: &[u8],
+    ) -> Result<Vec<u8>, SignError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let mse = MseSetCt {
+            alg_ref: algorithm,
+            key_ref: key.reference(scheme),
+        }
+        .into_apdu()
+        .map_err(SignError::Command)?;
+        self.exchange(&mse, "MSE:Set CT")?;
+
+        let chain = PsoDecipher { ciphertext }
+            .into_chain()
+            .map_err(SignError::Command)?;
+        let mut plaintext = Vec::new();
+        for command in &chain {
+            plaintext = self.exchange(command, "PSO:DECIPHER")?.body;
+        }
+        Ok(plaintext)
     }
 
     /// Transmit one signing command and demand a success response.

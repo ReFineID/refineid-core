@@ -23,8 +23,8 @@ use refineid_apdu::{
     CardTransport, CommandApdu, CredentialCommand, ResponseApdu, StatusWord, TransportOutcome,
 };
 use refineid_sign::commands::{
-    ExternalHashValue, MseSet, PsoComputeDigitalSignature, PsoHashExternal, SHA256_LEN, SHA384_LEN,
-    SignatureAlgRef,
+    DecipherAlgRef, ExternalHashValue, MseSet, MseSetCt, PsoComputeDigitalSignature, PsoDecipher,
+    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
 };
 use refineid_sign::{
     ECDSA_P384_SIG_BYTES, KeyRef, ORG_QUALIFIED_KEY_REF, RSA_3072_SIG_BYTES, SignError, SignOps,
@@ -219,6 +219,51 @@ fn citizen_rsa_pss_signs_over_the_loaded_hash_under_the_pss_reference() {
         .expect("scripted PSS sign succeeds");
     assert_eq!(result.as_bytes(), signature.as_slice());
     assert_eq!(result.len(), RSA_3072_SIG_BYTES);
+    assert!(transport.drained());
+}
+
+#[test]
+fn rsa_decipher_sets_the_confidentiality_template_and_chains_the_cryptogram() {
+    // A modulus-wide cryptogram; with the padding indicator it exceeds the
+    // short form and must chain.
+    let cryptogram = vec![DIGEST_FILL; RSA_3072_SIG_BYTES];
+    let plaintext = b"recovered content".to_vec();
+
+    let mse = MseSetCt {
+        alg_ref: DecipherAlgRef::RSA_PKCS1,
+        key_ref: KeyRef::Auth.reference(SignScheme::Citizen),
+    }
+    .into_apdu()
+    .expect("MSE:Set CT encodes")
+    .as_bytes()
+    .to_vec();
+    let chain = PsoDecipher {
+        ciphertext: &cryptogram,
+    }
+    .into_chain()
+    .expect("cryptogram chains");
+
+    let mut steps = vec![(mse, success(vec![]))];
+    let last_index = chain.len() - 1;
+    for (index, command) in chain.iter().enumerate() {
+        let response = if index == last_index {
+            success(plaintext.clone())
+        } else {
+            success(vec![])
+        };
+        steps.push((command.as_bytes().to_vec(), response));
+    }
+    let mut transport = Scripted::new(steps);
+
+    let result = transport
+        .decipher_rsa(
+            SignScheme::Citizen,
+            KeyRef::Auth,
+            DecipherAlgRef::RSA_PKCS1,
+            &cryptogram,
+        )
+        .expect("scripted decipher succeeds");
+    assert_eq!(result, plaintext);
     assert!(transport.drained());
 }
 

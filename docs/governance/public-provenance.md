@@ -103,6 +103,18 @@ deployment details.
   specifications (S1 section 3.6.3 Table 6)
   and ISO/IEC 7816-8. Secret, personal-information, protocol, and
   dependency scans were performed for this slice.
+- **RSA decipher.** Publication under Apache-2.0 directed on 2026-08-11
+  for the `refineid-apdu` outgoing command chaining and the
+  `refineid-sign` decipher: `CommandApdu::command_chain`, the
+  confidentiality-template MSE, and `decipher_rsa`, which ships the
+  modulus-wide cryptogram by chaining and returns the recovered
+  plaintext. Reconstructed against the specification alone -- the
+  behaviour reference implements no RSA decipher -- and validated on
+  hardware: the older card recovered a message encrypted to its
+  authentication certificate. Constants are traced to the DVV FINEID
+  specifications (S1 section 3.9 and the confidentiality-template table)
+  and ISO/IEC 7816-4 and -8. Secret, personal-information, protocol, and
+  dependency scans were performed for this slice.
 
 Before a later slice is admitted, its review must record:
 

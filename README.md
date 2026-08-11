@@ -13,8 +13,8 @@ crates stay transport-agnostic and country-profile-neutral.
 ## Crates
 
 - `crates/apdu` (`refineid-apdu`) -- typed ISO 7816-4 commands, status
-  words, and the card transport port, with separate replay-safe and
-  credential command ownership paths.
+  words, outgoing command chaining, and the card transport port, with
+  separate replay-safe and credential command ownership paths.
 - `crates/auth` (`refineid-auth`) -- PIN and PUK role types, VERIFY
   PIN1/PIN2 over the credential-command path for both citizen and
   organizational cards, the counter-safe status probe that resolves the
@@ -27,14 +27,14 @@ crates stay transport-agnostic and country-profile-neutral.
 - `crates/pkcs15` (`refineid-pkcs15`) -- PKCS#15 file-system reads:
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
-- `crates/sign` (`refineid-sign`) -- card-side signing: the MSE/PSO
-  choreography for the pre-hashed RSA (PKCS#1 and PSS) and P-384 ECDSA
-  chains, over both the citizen chain (PSO:HASH then an empty PSO:CDS) and
-  the organizational chain (an inline-digest PSO:CDS).
+- `crates/sign` (`refineid-sign`) -- card-side private-key operations: the
+  MSE/PSO choreography for the pre-hashed RSA (PKCS#1 and PSS) and P-384
+  ECDSA signing chains, over both the citizen chain (PSO:HASH then an empty
+  PSO:CDS) and the organizational chain (an inline-digest PSO:CDS), plus
+  RSA decipher (PSO:DECIPHER over a command-chained cryptogram).
 
-Planned work adds PSO:DECIPHER (whose modulus-wide ciphertext needs
-command chaining) into `refineid-sign`, and an X.509/SPKI layer over the
-certificates the read path returns.
+Planned work adds an X.509/SPKI layer over the certificates the read path
+returns.
 
 ## Security posture
 

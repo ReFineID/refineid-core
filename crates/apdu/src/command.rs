@@ -196,6 +196,43 @@ impl CommandApdu {
         Ok(Self::from_wire(bytes))
     }
 
+    /// Split a large data field into a command-chained sequence under one
+    /// instruction (ISO 7816-4 section 5.1.1.1). Every command but the
+    /// last sets the chaining class and carries a short-form-sized chunk;
+    /// only the last carries `le` and `header`'s own class, so the card
+    /// reassembles the chunks and processes the whole. A data field that
+    /// already fits the short form yields a single case-4 command.
+    ///
+    /// The caller transmits the commands in order: each non-final command
+    /// draws a success status, and the final one carries the response.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommandDataError::Empty`] when `data` is empty.
+    pub fn command_chain(
+        header: CommandHeader,
+        data: &[u8],
+        le: u8,
+    ) -> Result<Vec<Self>, CommandDataError> {
+        if data.is_empty() {
+            return Err(CommandDataError::Empty);
+        }
+        let mut commands = Vec::new();
+        let mut chunks = data.chunks(SHORT_APDU_DATA_MAX).peekable();
+        while let Some(chunk) = chunks.next() {
+            if chunks.peek().is_some() {
+                let chained = CommandHeader {
+                    class: ApduClass::ChainedFirst,
+                    ..header
+                };
+                commands.push(Self::case_3(chained, chunk)?);
+            } else {
+                commands.push(Self::case_4(header, chunk, le)?);
+            }
+        }
+        Ok(commands)
+    }
+
     /// Validate a short-form data field and return its Lc byte.
     fn short_form_lc(data: &[u8]) -> Result<u8, CommandDataError> {
         if data.is_empty() {
@@ -500,6 +537,15 @@ mod tests {
     const OVER_SHORT_CAPACITY: usize = SHORT_APDU_DATA_MAX + 1;
     /// Data length above the credential-body capacity.
     const OVER_CREDENTIAL_CAPACITY: usize = CREDENTIAL_BODY_MAX + 1;
+    /// Filler byte for the command-chaining shape tests.
+    const CHAIN_FILL: u8 = 0x5A;
+    /// Tail chunk length for the two-command chaining test, so the total
+    /// data field spans one full short-form chunk plus this tail.
+    const CHAIN_TAIL_LEN: usize = 130;
+    /// Commands a two-chunk chain produces.
+    const TWO_CHUNKS: usize = 2;
+    /// A data length that fits the short form in one command.
+    const SHORT_FIELD_LEN: usize = 8;
 
     fn header() -> CommandHeader {
         CommandHeader {
@@ -512,6 +558,42 @@ mod tests {
 
     fn expected_prefix() -> Vec<u8> {
         vec![ApduClass::Plain.as_byte(), TEST_INS, TEST_P1, TEST_P2]
+    }
+
+    #[test]
+    fn command_chain_splits_a_large_field_across_the_chaining_class() {
+        let data = vec![CHAIN_FILL; SHORT_APDU_DATA_MAX + CHAIN_TAIL_LEN];
+        let chain =
+            CommandApdu::command_chain(header(), &data, TEST_LE).expect("non-empty data chains");
+        assert_eq!(chain.len(), TWO_CHUNKS);
+
+        // First command: chaining class, a full short-form chunk, no Le.
+        let first = chain[0].as_bytes();
+        assert_eq!(first[0], ApduClass::ChainedFirst.as_byte());
+        assert_eq!(first[1], TEST_INS);
+        assert_eq!(usize::from(first[APDU_HEADER_LEN]), SHORT_APDU_DATA_MAX);
+        assert_eq!(first.len(), APDU_HEADER_LEN + LC_LEN + SHORT_APDU_DATA_MAX);
+
+        // Last command: the header's own (plain) class, the tail, then Le.
+        let last = chain[1].as_bytes();
+        assert_eq!(last[0], ApduClass::Plain.as_byte());
+        assert_eq!(usize::from(last[APDU_HEADER_LEN]), CHAIN_TAIL_LEN);
+        assert_eq!(last.last().copied(), Some(TEST_LE));
+    }
+
+    #[test]
+    fn command_chain_of_a_short_field_is_a_single_case_4() {
+        let data = vec![CHAIN_FILL; SHORT_FIELD_LEN];
+        let chain = CommandApdu::command_chain(header(), &data, TEST_LE).expect("chains");
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].as_bytes()[0], ApduClass::Plain.as_byte());
+        assert_eq!(chain[0].as_bytes().last().copied(), Some(TEST_LE));
+    }
+
+    #[test]
+    fn command_chain_rejects_empty_data() {
+        let result = CommandApdu::command_chain(header(), &[], TEST_LE);
+        assert_eq!(result, Err(CommandDataError::Empty));
     }
 
     #[test]

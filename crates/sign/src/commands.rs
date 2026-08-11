@@ -66,6 +66,19 @@ const PSO_CDS_P2: u8 = 0x9A;
 /// signature; the adapter chains any 61xx response.
 const PSO_CDS_LE_ANY: u8 = 0x00;
 
+/// MSE P2 for the confidentiality template (CT), which holds the decipher
+/// key (FINEID S1 v4.2 section 3.6.2).
+const MSE_P2_CT: u8 = 0xB8;
+/// PSO:DECIPHER P1: the decrypted value is returned in the response
+/// (FINEID S1 v4.2 section 3.9).
+const PSO_DECIPHER_P1: u8 = 0x80;
+/// PSO:DECIPHER P2: the cryptogram is in the data field.
+const PSO_DECIPHER_P2: u8 = 0x86;
+/// Padding-content indicator prefixing the cryptogram (FINEID S1 v4.2
+/// section 3.9): the data field is this byte followed by the encrypted
+/// message.
+const DECIPHER_PADDING_INDICATOR: u8 = 0x81;
+
 /// SHA-1 digest length in bytes.
 pub const SHA1_LEN: usize = 20;
 /// SHA-224 digest length in bytes.
@@ -109,6 +122,49 @@ impl SignatureAlgRef {
     }
 }
 
+/// Algorithm-reference byte for the confidentiality template, per FINEID
+/// S1 v4.2 section 3.6.3 Table 7: the padding a PSO:DECIPHER expects the
+/// cryptogram to carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecipherAlgRef {
+    byte: u8,
+}
+
+impl DecipherAlgRef {
+    /// RSASSA PKCS#1 v1.5 (block type 2) padding.
+    pub const RSA_PKCS1: Self = Self { byte: 0x1A };
+    /// RSAES-OAEP with SHA-256.
+    pub const RSAES_OAEP_SHA256: Self = Self { byte: 0x4D };
+
+    /// The wire byte.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self.byte
+    }
+}
+
+/// Assemble an MSE:SET control-reference body -- the algorithm and key
+/// control-reference objects -- into a case-3 command under `template_p2`.
+fn mse_set_apdu(template_p2: u8, alg: u8, key_ref: u8) -> Result<CommandApdu, CommandDataError> {
+    let data = [
+        CRDO_ALG_REF,
+        CRDO_VALUE_LEN,
+        alg,
+        CRDO_KEY_REF,
+        CRDO_VALUE_LEN,
+        key_ref,
+    ];
+    CommandApdu::case_3(
+        CommandHeader {
+            class: ApduClass::Plain,
+            instruction: MSE_INS,
+            p1: MSE_P1_SET,
+            p2: template_p2,
+        },
+        &data,
+    )
+}
+
 /// MANAGE SECURITY ENVIRONMENT: SET for a signing key, in the
 /// digital-signature template.
 #[derive(Debug, Clone, Copy)]
@@ -131,23 +187,31 @@ impl MseSet {
     /// control-reference body is always within the short form. The
     /// result is fallible so the caller stays fail-closed.
     pub fn into_apdu(self) -> Result<CommandApdu, CommandDataError> {
-        let data = [
-            CRDO_ALG_REF,
-            CRDO_VALUE_LEN,
-            self.alg_ref.as_byte(),
-            CRDO_KEY_REF,
-            CRDO_VALUE_LEN,
-            self.key_ref,
-        ];
-        CommandApdu::case_3(
-            CommandHeader {
-                class: ApduClass::Plain,
-                instruction: MSE_INS,
-                p1: MSE_P1_SET,
-                p2: MSE_P2_DST,
-            },
-            &data,
-        )
+        mse_set_apdu(MSE_P2_DST, self.alg_ref.as_byte(), self.key_ref)
+    }
+}
+
+/// MANAGE SECURITY ENVIRONMENT: SET for a decipher key, in the
+/// confidentiality template.
+#[derive(Debug, Clone, Copy)]
+pub struct MseSetCt {
+    /// Algorithm (padding) reference.
+    pub alg_ref: DecipherAlgRef,
+    /// Private-key reference byte, already resolved for the card's
+    /// numbering.
+    pub key_ref: u8,
+}
+
+impl MseSetCt {
+    /// Serialise into a case-3 command APDU.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandDataError`] never triggers here: the fixed six-byte
+    /// control-reference body is always within the short form. The result
+    /// is fallible so the caller stays fail-closed.
+    pub fn into_apdu(self) -> Result<CommandApdu, CommandDataError> {
+        mse_set_apdu(MSE_P2_CT, self.alg_ref.as_byte(), self.key_ref)
     }
 }
 
@@ -277,13 +341,50 @@ impl PsoComputeDigitalSignature {
     }
 }
 
+/// PERFORM SECURITY OPERATION: DECIPHER over an RSA cryptogram.
+///
+/// The data field is the padding-content indicator followed by the
+/// encrypted message, which is modulus-wide and so exceeds the short
+/// form; the cryptogram is shipped by command chaining (FINEID S1 v4.2
+/// section 3.9). The card strips the padding and returns the plaintext.
+#[derive(Debug, Clone, Copy)]
+pub struct PsoDecipher<'a> {
+    /// The RSA cryptogram: exactly one modulus-wide block.
+    pub ciphertext: &'a [u8],
+}
+
+impl PsoDecipher<'_> {
+    /// Serialise into a command-chained sequence: the caller transmits
+    /// each in order, and the last returns the deciphered plaintext.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandDataError::Empty`] when the cryptogram is empty.
+    pub fn into_chain(self) -> Result<Vec<CommandApdu>, CommandDataError> {
+        let mut data = Vec::with_capacity(1 + self.ciphertext.len());
+        data.push(DECIPHER_PADDING_INDICATOR);
+        data.extend_from_slice(self.ciphertext);
+        CommandApdu::command_chain(
+            CommandHeader {
+                class: ApduClass::Plain,
+                instruction: PSO_INS,
+                p1: PSO_DECIPHER_P1,
+                p2: PSO_DECIPHER_P2,
+            },
+            &data,
+            PSO_CDS_LE_ANY,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        CRDO_ALG_REF, CRDO_KEY_REF, CRDO_VALUE_LEN, ExternalHashValue, HASH_VALUE_HEADER_LEN,
-        MSE_INS, MSE_P1_SET, MSE_P2_DST, MseSet, PSO_CDS_LE_ANY, PSO_CDS_P1, PSO_CDS_P2,
+        CRDO_ALG_REF, CRDO_KEY_REF, CRDO_VALUE_LEN, DECIPHER_PADDING_INDICATOR, DecipherAlgRef,
+        ExternalHashValue, HASH_VALUE_HEADER_LEN, MSE_INS, MSE_P1_SET, MSE_P2_CT, MSE_P2_DST,
+        MseSet, MseSetCt, PSO_CDS_LE_ANY, PSO_CDS_P1, PSO_CDS_P2, PSO_DECIPHER_P1, PSO_DECIPHER_P2,
         PSO_HASH_P1, PSO_HASH_P2_EXTERNAL, PSO_HASH_TAG_VALUE, PSO_INS, PsoComputeDigitalSignature,
-        PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
+        PsoDecipher, PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
     };
     use crate::{KEY_REF_AUTH, KEY_REF_SIGN, ORG_QUALIFIED_KEY_REF};
     use refineid_apdu::ApduClass;
@@ -298,12 +399,25 @@ mod tests {
     const ALG_SHA256_ECDSA: u8 = 0x44;
     /// The documented SHA-256 + RSASSA-PSS algorithm-reference byte.
     const ALG_SHA256_RSA_PSS: u8 = 0x45;
+    /// The documented RSA PKCS#1 v1.5 decipher algorithm-reference byte.
+    const ALG_DECIPHER_PKCS1: u8 = 0x1A;
+    /// RSA-3072 modulus width in bytes: one cryptogram block.
+    const RSA_3072_MODULUS_LEN: usize = 384;
+    /// Commands a modulus-wide cryptogram chains into.
+    const TWO_DECIPHER_COMMANDS: usize = 2;
+    /// Wire index of the instruction byte.
+    const INS_INDEX: usize = 1;
+    /// Wire index of the P1 byte.
+    const P1_INDEX: usize = 2;
+    /// Wire index of the P2 byte.
+    const P2_INDEX: usize = 3;
+    /// Wire offset of the data field: past the header and the Lc byte.
+    const DATA_OFFSET: usize = 5;
 
-    /// The expected MSE:Set wire for `alg` and `key_ref`, assembled from
-    /// the named framing constants: header, Lc, then the algorithm and
-    /// key control-reference objects, all under the digital-signature
-    /// template.
-    fn mse_set_wire(alg: u8, key_ref: u8) -> Vec<u8> {
+    /// The expected MSE:Set wire for `template_p2`, `alg`, and `key_ref`,
+    /// assembled from the named framing constants: header, Lc, then the
+    /// algorithm and key control-reference objects.
+    fn mse_set_wire(template_p2: u8, alg: u8, key_ref: u8) -> Vec<u8> {
         let body = [
             CRDO_ALG_REF,
             CRDO_VALUE_LEN,
@@ -312,7 +426,7 @@ mod tests {
             CRDO_VALUE_LEN,
             key_ref,
         ];
-        let mut wire = vec![ApduClass::Plain.as_byte(), MSE_INS, MSE_P1_SET, MSE_P2_DST];
+        let mut wire = vec![ApduClass::Plain.as_byte(), MSE_INS, MSE_P1_SET, template_p2];
         wire.push(body.len() as u8);
         wire.extend_from_slice(&body);
         wire
@@ -374,7 +488,10 @@ mod tests {
         }
         .into_apdu()
         .expect("fixed body encodes");
-        assert_eq!(apdu.as_bytes(), mse_set_wire(ALG_SHA256_RSA, KEY_REF_SIGN));
+        assert_eq!(
+            apdu.as_bytes(),
+            mse_set_wire(MSE_P2_DST, ALG_SHA256_RSA, KEY_REF_SIGN)
+        );
     }
 
     #[test]
@@ -390,7 +507,7 @@ mod tests {
         .expect("fixed body encodes");
         assert_eq!(
             apdu.as_bytes(),
-            mse_set_wire(ALG_SHA384_ECDSA, KEY_REF_AUTH)
+            mse_set_wire(MSE_P2_DST, ALG_SHA384_ECDSA, KEY_REF_AUTH)
         );
     }
 
@@ -404,7 +521,7 @@ mod tests {
         .expect("fixed body encodes");
         assert_eq!(
             apdu.as_bytes(),
-            mse_set_wire(ALG_SHA256_ECDSA, ORG_QUALIFIED_KEY_REF)
+            mse_set_wire(MSE_P2_DST, ALG_SHA256_ECDSA, ORG_QUALIFIED_KEY_REF)
         );
     }
 
@@ -448,5 +565,49 @@ mod tests {
             .into_apdu_with_digest(&digest)
             .expect("digest fits the short form");
         assert_eq!(apdu.as_bytes(), pso_cds_inline_wire(&digest));
+    }
+
+    #[test]
+    fn decipher_references_pack_the_documented_bytes() {
+        assert_eq!(DecipherAlgRef::RSA_PKCS1.as_byte(), ALG_DECIPHER_PKCS1);
+    }
+
+    #[test]
+    fn mse_set_ct_names_the_confidentiality_template() {
+        let apdu = MseSetCt {
+            alg_ref: DecipherAlgRef::RSA_PKCS1,
+            key_ref: KEY_REF_AUTH,
+        }
+        .into_apdu()
+        .expect("fixed body encodes");
+        assert_eq!(
+            apdu.as_bytes(),
+            mse_set_wire(MSE_P2_CT, ALG_DECIPHER_PKCS1, KEY_REF_AUTH)
+        );
+    }
+
+    #[test]
+    fn pso_decipher_chains_the_padding_indicator_and_cryptogram() {
+        let cryptogram = [FILL; RSA_3072_MODULUS_LEN];
+        let chain = PsoDecipher {
+            ciphertext: &cryptogram,
+        }
+        .into_chain()
+        .expect("cryptogram chains");
+        assert_eq!(chain.len(), TWO_DECIPHER_COMMANDS);
+
+        // First command: chaining class, the DECIPHER header, and a data
+        // field that opens with the padding-content indicator.
+        let first = chain[0].as_bytes();
+        assert_eq!(first[0], ApduClass::ChainedFirst.as_byte());
+        assert_eq!(first[INS_INDEX], PSO_INS);
+        assert_eq!(first[P1_INDEX], PSO_DECIPHER_P1);
+        assert_eq!(first[P2_INDEX], PSO_DECIPHER_P2);
+        assert_eq!(first[DATA_OFFSET], DECIPHER_PADDING_INDICATOR);
+
+        // Last command: plain class, ending in the expected-length byte.
+        let last = chain[1].as_bytes();
+        assert_eq!(last[0], ApduClass::Plain.as_byte());
+        assert_eq!(last.last().copied(), Some(PSO_CDS_LE_ANY));
     }
 }

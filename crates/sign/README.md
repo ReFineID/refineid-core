@@ -25,13 +25,19 @@ reference. The signature bytes are returned in an algorithm-typed
 container. PSO:DECIPHER, whose modulus-wide ciphertext needs command
 chaining, follows in a later slice.
 
-The PSS path is hardware-validated: on the older card the authentication
-key produced a PSS signature that verified against the authentication
-certificate, which exercises the whole citizen signing choreography the
-PKCS#1 chain shares. The remaining chains (PKCS#1, ECDSA, and the
+`SignOps::decipher_rsa` recovers an RSA cryptogram: it sets the
+confidentiality template and ships the modulus-wide cryptogram by command
+chaining (its data field exceeds the short form), and the card returns the
+recovered plaintext. `DecipherAlgRef` names the padding (PKCS#1 v1.5 or
+RSAES-OAEP-SHA256).
+
+The PSS and decipher paths are hardware-validated on the older card: the
+authentication key produced a PSS signature that verified against the
+authentication certificate, and it recovered a message encrypted to that
+certificate. The remaining signing chains (PKCS#1, ECDSA, and the
 organizational inline-digest form) rest on scripted-transport tests and,
 for the organizational chain, the behaviour reference, until each is
 observed on hardware. Constants and the command choreography are traced
 to the
 [DVV FINEID specifications](https://dvv.fi/en/fineid-specifications) (S1
-sections 3.6 through 3.8, S4-1, S4-2) and ISO/IEC 7816-8.
+sections 3.6 through 3.9, S4-1, S4-2) and ISO/IEC 7816-4 and -8.
