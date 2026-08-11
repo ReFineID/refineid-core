@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/apdu",
+    "crates/atr",
     "crates/auth",
     "crates/ber",
     "crates/pace",

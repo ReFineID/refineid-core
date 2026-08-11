@@ -284,6 +284,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "refineid-atr"
+version = "26.8.11"
+
+[[package]]
 name = "refineid-auth"
 version = "26.8.11"
 dependencies = [
