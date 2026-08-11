@@ -26,6 +26,7 @@ repository = "https://github.com/ReFineID/refineid-core"
 refineid-apdu = { path = "crates/apdu" }
 refineid-auth = { path = "crates/auth" }
 refineid-ber = { path = "crates/ber" }
+refineid-pkcs15 = { path = "crates/pkcs15" }
 refineid-x509 = { path = "crates/x509" }
 aes = "0.9"
 cbc = "0.2"

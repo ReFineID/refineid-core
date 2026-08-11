@@ -342,6 +342,7 @@ dependencies = [
  "getrandom",
  "hmac",
  "refineid-auth",
+ "refineid-pkcs15",
  "sha2",
  "subtle",
  "zeroize",

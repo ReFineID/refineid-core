@@ -22,6 +22,8 @@
 use core::fmt;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::verify::PinSlot;
+
 /// Minimum PIN1 length from FINEID S4-1 v4.2 section 4.1.
 pub const PIN1_MIN_LENGTH: usize = 4;
 /// Minimum PIN2 length from FINEID S4-1 v4.2 section 4.1.
@@ -254,6 +256,67 @@ impl Pin2 {
 impl fmt::Debug for Pin2 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Pin2([redacted])")
+    }
+}
+
+mod sealed {
+    /// Seals [`CachedPin`] so only this crate's PIN roles can implement it.
+    pub trait Sealed {}
+    impl Sealed for super::Pin1 {}
+    impl Sealed for super::Pin2 {}
+}
+
+/// A PIN role whose card rejection a negative cache may remember.
+///
+/// Sealed: implemented only for [`Pin1`] and [`Pin2`]. The PUK is
+/// deliberately excluded -- it authorises nothing, spends its own retry
+/// counter, and has no cache path.
+///
+/// The digits are reachable only through the scoped
+/// [`with_digits`](Self::with_digits) borrow -- the same custody idiom as
+/// the credential-command wire. They are lent for one call so a keyed
+/// fingerprint can absorb them, and are never handed out as an owned
+/// value; there is still no public `as_bytes` on a PIN role.
+pub trait CachedPin: sealed::Sealed {
+    /// The slot this PIN targets.
+    #[must_use]
+    fn slot(&self) -> PinSlot;
+
+    /// Number of validated digits.
+    #[must_use]
+    fn digit_count(&self) -> usize;
+
+    /// Lend the validated digits to `read` for one call. The reader must
+    /// absorb them (for example into a keyed fingerprint) and must not
+    /// retain them.
+    fn with_digits<R>(&self, read: impl FnOnce(&[u8]) -> R) -> R;
+}
+
+impl CachedPin for Pin1 {
+    fn slot(&self) -> PinSlot {
+        PinSlot::Pin1
+    }
+
+    fn digit_count(&self) -> usize {
+        self.0.digit_count()
+    }
+
+    fn with_digits<R>(&self, read: impl FnOnce(&[u8]) -> R) -> R {
+        read(self.digits())
+    }
+}
+
+impl CachedPin for Pin2 {
+    fn slot(&self) -> PinSlot {
+        PinSlot::Pin2
+    }
+
+    fn digit_count(&self) -> usize {
+        self.0.digit_count()
+    }
+
+    fn with_digits<R>(&self, read: impl FnOnce(&[u8]) -> R) -> R {
+        read(self.digits())
     }
 }
 
