@@ -133,7 +133,7 @@ mod tests {
         RETRIES_PRISTINE, pin1_status_permits_consumer_authentication,
         pin1_status_permits_reusable_cache,
     };
-    use refineid_apdu::PinRetries;
+    use refineid_apdu::{PinRetries, StatusWord};
 
     /// One above the five-attempt limit, for the rejection test.
     const ABOVE_LIMIT: u8 = 6;
@@ -212,7 +212,7 @@ mod tests {
             PinStatus::NoInfo
         ));
         assert!(!pin1_status_permits_consumer_authentication(
-            PinStatus::Other(UNMODELED_SW)
+            PinStatus::Other(StatusWord::from_u16(UNMODELED_SW))
         ));
     }
 

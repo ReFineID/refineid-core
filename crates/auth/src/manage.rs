@@ -75,8 +75,8 @@ pub enum ManageOutcome {
     /// The method is blocked or its reference data is invalidated; the
     /// update cannot proceed.
     Locked,
-    /// Any other status word, surfaced for the caller to map.
-    Other(u16),
+    /// Any other status word, surfaced as-is for the caller to map.
+    Other(StatusWord),
 }
 
 /// Decode a credential-update response status word into an outcome.
@@ -90,7 +90,7 @@ pub const fn classify_manage_sw(sw: StatusWord) -> ManageOutcome {
         StatusWord::AuthenticationBlocked | StatusWord::ReferenceDataInvalidated => {
             ManageOutcome::Locked
         }
-        other => ManageOutcome::Other(other.as_u16()),
+        other => ManageOutcome::Other(other),
     }
 }
 
@@ -437,7 +437,7 @@ mod tests {
         );
         assert_eq!(
             classify_manage_sw(StatusWord::FileNotFound),
-            ManageOutcome::Other(StatusWord::FileNotFound.as_u16())
+            ManageOutcome::Other(StatusWord::FileNotFound)
         );
     }
 

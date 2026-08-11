@@ -146,8 +146,8 @@ pub enum VerifyOutcome {
     /// The authentication method is blocked; only an unblock recovers
     /// it.
     Locked,
-    /// Any other status word, surfaced for the caller to map.
-    Other(u16),
+    /// Any other status word, surfaced as-is for the caller to map.
+    Other(StatusWord),
 }
 
 /// Outcome of a counter-safe status probe.
@@ -161,8 +161,8 @@ pub enum PinStatus {
     NoInfo,
     /// The PIN method is blocked or its usage counter is exhausted.
     Locked,
-    /// Any other status word, surfaced for the caller.
-    Other(u16),
+    /// Any other status word, surfaced as-is for the caller.
+    Other(StatusWord),
 }
 
 /// A VERIFY-path failure.
@@ -216,7 +216,7 @@ pub const fn classify_verify_sw(sw: StatusWord) -> VerifyOutcome {
         StatusWord::AuthenticationBlocked | StatusWord::ReferenceDataInvalidated => {
             VerifyOutcome::Locked
         }
-        other => VerifyOutcome::Other(other.as_u16()),
+        other => VerifyOutcome::Other(other),
     }
 }
 
@@ -230,7 +230,7 @@ pub const fn classify_pin_status_sw(sw: StatusWord) -> PinStatus {
         StatusWord::AuthenticationBlocked | StatusWord::ReferenceDataInvalidated => {
             PinStatus::Locked
         }
-        other => PinStatus::Other(other.as_u16()),
+        other => PinStatus::Other(other),
     }
 }
 
@@ -719,7 +719,7 @@ mod tests {
         );
         assert_eq!(
             classify_verify_sw(StatusWord::FileNotFound),
-            VerifyOutcome::Other(StatusWord::FileNotFound.as_u16())
+            VerifyOutcome::Other(StatusWord::FileNotFound)
         );
     }
 
