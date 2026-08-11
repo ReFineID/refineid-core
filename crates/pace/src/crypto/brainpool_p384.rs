@@ -189,6 +189,15 @@ impl AffinePoint {
         }
         let x = U384::from_be_slice(arr.get(1..1 + COORD_LEN)?);
         let y = U384::from_be_slice(arr.get(1 + COORD_LEN..)?);
+        // A coordinate is a field element, so it must be a canonical
+        // residue below the prime. A value at or above p is a non-canonical
+        // encoding; refuse it rather than silently reduce it, so a stored
+        // coordinate is always the value it appears to be (SEC1 v2 section
+        // 2.3.4).
+        let prime = PRIME.get_copy();
+        if x >= prime || y >= prime {
+            return None;
+        }
         let point = Self {
             coords: Some((x, y)),
         };
@@ -349,6 +358,18 @@ mod tests {
         let decoded = AffinePoint::decode_uncompressed(encoded.as_bytes())
             .expect("encoded generator decodes");
         assert_eq!(decoded, g);
+    }
+
+    #[test]
+    fn a_coordinate_at_the_prime_is_rejected() {
+        // A coordinate equal to p is a non-canonical field element and must
+        // be refused at decode, before the on-curve check could reduce it.
+        let prime_bytes = super::PRIME.get_copy().to_be_bytes();
+        let mut encoding = [0_u8; SEC1_UNCOMPRESSED_LEN];
+        encoding[0] = super::SEC1_UNCOMPRESSED_TAG;
+        encoding[1..1 + COORD_LEN].copy_from_slice(&prime_bytes);
+        encoding[1 + COORD_LEN..].copy_from_slice(&prime_bytes);
+        assert!(AffinePoint::decode_uncompressed(&encoding).is_none());
     }
 
     #[test]
