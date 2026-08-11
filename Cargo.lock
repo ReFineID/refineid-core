@@ -354,6 +354,7 @@ version = "26.8.11"
 dependencies = [
  "refineid-apdu",
  "refineid-ber",
+ "refineid-x509",
 ]
 
 [[package]]

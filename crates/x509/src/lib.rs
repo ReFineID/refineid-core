@@ -111,9 +111,12 @@ impl EcCurve {
 
 /// A certificate as raw, unvalidated DER from outside the trust domain.
 ///
-/// This is the boundary type. Its only consumer is
-/// [`PublicKey::from_certificate`], which deconstructs it and reconstructs
-/// typed key values; the raw bytes do not survive the reconstruction.
+/// This is the boundary type. Validation is [`PublicKey::from_certificate`],
+/// which deconstructs it and reconstructs typed key values; the raw bytes
+/// do not survive that reconstruction. The bytes may also be borrowed via
+/// [`as_bytes`](Self::as_bytes) while still unvalidated -- a certificate is
+/// public data, and a caller may forward the DER to a display or an
+/// independent parser -- but nothing here treats those bytes as trusted.
 #[derive(Debug, Clone)]
 pub struct UnvalidatedCertificate(Vec<u8>);
 
@@ -122,6 +125,12 @@ impl UnvalidatedCertificate {
     #[must_use]
     pub const fn new(der: Vec<u8>) -> Self {
         Self(der)
+    }
+
+    /// Borrow the raw, still-unvalidated DER bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
 }
 

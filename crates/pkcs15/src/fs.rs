@@ -29,6 +29,7 @@ use refineid_apdu::{
     Aid, AidError, ApduClass, CardTransport, CommandApdu, CommandDataError, CommandHeader, FileId,
     ResponseApdu, StatusWord, TransportOutcome,
 };
+use refineid_x509::UnvalidatedCertificate;
 
 /// The PKCS#15 application identifier the FINEID card publishes per
 /// FINEID S4-2 section 3.1. It is the registered application provider
@@ -169,34 +170,6 @@ impl CertSlot {
             Self::RootCa,
             Self::SignatureAlt,
         ]
-    }
-}
-
-/// Certificate bytes read from a card, exactly as returned: one DER
-/// object.
-///
-/// The type carries no parsing; X.509 interpretation is a consumer
-/// concern.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CertDer(Vec<u8>);
-
-impl CertDer {
-    /// Wrap certificate DER bytes.
-    #[must_use]
-    pub const fn new(bytes: Vec<u8>) -> Self {
-        Self(bytes)
-    }
-
-    /// Borrow the DER bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
-
-    /// Consume into the owned DER bytes.
-    #[must_use]
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.0
     }
 }
 
@@ -592,7 +565,10 @@ pub trait Pkcs15Ops: CardTransport {
     /// Any underlying SELECT or read failure. An absent slot surfaces
     /// as [`StatusWord::FileNotFound`], which callers treat as "not
     /// provisioned".
-    fn read_certificate(&mut self, slot: CertSlot) -> Result<CertDer, Pkcs15Error<Self::Error>>
+    fn read_certificate(
+        &mut self,
+        slot: CertSlot,
+    ) -> Result<UnvalidatedCertificate, Pkcs15Error<Self::Error>>
     where
         Self: Sized,
     {
@@ -614,7 +590,7 @@ pub trait Pkcs15Ops: CardTransport {
                 self.read_binary_der_object(slot.label())?
             }
         };
-        Ok(CertDer::new(bytes))
+        Ok(UnvalidatedCertificate::new(bytes))
     }
 
     /// Read and parse EF.TokenInfo.

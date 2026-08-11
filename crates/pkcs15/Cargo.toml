@@ -18,3 +18,4 @@ workspace = true
 [dependencies]
 refineid-apdu.workspace = true
 refineid-ber.workspace = true
+refineid-x509.workspace = true
