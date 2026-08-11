@@ -58,8 +58,9 @@ Constraints are traced to the
 [ICAO Doc 9303](https://www.icao.int/publications/doc-series/doc-9303), and
 the ISO/IEC 7816 series. See
 [credential custody](docs/security/credential-custody.md),
-the [core migration policy](docs/architecture/core-migration.md), and
-[public provenance](docs/governance/public-provenance.md).
+the [core migration policy](docs/architecture/core-migration.md),
+[public provenance](docs/governance/public-provenance.md), and the
+[supported cards](docs/reference/supported-cards.md).
 
 ## Build and check
 

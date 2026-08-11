@@ -274,9 +274,12 @@ to RFC 5280, PKCS#1, and the object identifiers in RFC 5480 and RFC 8017.
 
 ## Hardware validation
 
-Slices two through five have been exercised against both shipped FINEID
-card generations over both the contact and the contactless interfaces:
-the PACE handshake and secure messaging, which the card accepts on
+Slices two through five have been exercised against two citizen card
+generations -- the Gemalto MultiApp v4.2 (FINEID S4-1 v3.1) and the
+Thales MultiApp v5.0 (FINEID S4-1 v4.0), the "older" and "newer" cards
+this record names -- over both the contact and the contactless
+interfaces: the PACE handshake and secure messaging, which the card
+accepts on
 contact and requires on contactless; certificate reads, EF.TokenInfo
 parsing, and the status classifiers; and a PIN VERIFY over both the
 plain and the secure-messaging credential paths. Every VERIFY was framed
@@ -284,7 +287,10 @@ by the counter-safe status probe and run with the correct PIN, so no
 retry counter was consumed and no credential was locked. The counter
 read as pristine before each verification and as verified after. The
 reconstruction required no change to pass on either generation or
-either interface.
+either interface. The earlier Gemalto MultiApp v3.0 (FINEID S4-1 v3.0)
+citizen generation and the Idemia Cosmo X (FINEID S1 v5.0) organizational
+card were not available; the [supported cards](../reference/supported-cards.md)
+reference lists all four with their answer-to-reset identifiers.
 
 Three behaviours the validation recorded, for the transport adapters
 that remain outside this tree: the newer card requires the PKCS#15
