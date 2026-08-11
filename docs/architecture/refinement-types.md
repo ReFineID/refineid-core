@@ -1,7 +1,7 @@
-# Refined types
+# Refinement types
 
-This is the type discipline of the core: what a refined type is, what a
-byte buffer may and may not be, and how data from outside the trust
+This is the type discipline of the core: what a refinement type is, what
+a byte buffer may and may not be, and how data from outside the trust
 domain becomes typed meaning. The [migration policy](core-migration.md)
 defines trust by construction and the numeric policy; this document
 rationalizes them into principles a designer can apply and a reviewer can
@@ -21,8 +21,20 @@ code needs.
 
 The contrapositive matters just as much: a wrapper whose constructor
 cannot fail asserts the empty predicate. It refines nothing, proves
-nothing, and is not a refined type -- it is ceremony, and ceremony is
+nothing, and is not a refinement type -- it is ceremony, and ceremony is
 reviewed as a defect exactly like rawness.
+
+The aim is Milner's: a well-typed program cannot "go wrong" -- extended
+here from memory safety to protocol safety. In Saraswat's phrasing, a
+language is type-safe when the only operations that can be performed on
+data are those sanctioned by the type of the data; the core designs every
+type so that the sanctioned operations are exactly the safe ones. A PIN2
+cannot reach the PIN1 slot because no function accepts it there; a
+credential command cannot be replayed because transmitting it consumes
+it; a certificate's raw bytes cannot be consulted past the border because
+no accessor returns them. When the sanctioned set equals the safe set,
+the compiler carries the security argument, and a whole class of protocol
+mistakes stops being a runtime risk and becomes a build failure.
 
 ## Validated at the border, trusted after
 
@@ -145,9 +157,9 @@ and a shape-typed API cannot tell them apart.
 The Rust spelling of a duck at the border is a byte-likeness bound: a
 border or domain function generic over anything convertible to bytes,
 where a nominal type belongs. Such a signature says "any duck welcome"
-and erases exactly the provenance the refined types exist to carry. A
+and erases exactly the provenance the refinement types exist to carry. A
 border function takes the explicitly unvalidated boundary type; a domain
-function takes the refined type whose predicate it relies on. Then a
+function takes the refinement type whose predicate it relies on. Then a
 wrong argument is a compile error and the proof-of-origin travels with
 the value.
 
@@ -205,4 +217,4 @@ review:
    proving something nothing relies on?
 9. Does any border or domain signature accept byte-likeness -- a
    conversion bound, a generic byte parameter -- where a nominal
-   unvalidated or refined type belongs?
+   unvalidated or refinement type belongs?

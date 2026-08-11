@@ -355,7 +355,7 @@ Every later slice must pass:
 - copyright and contribution provenance review;
 - public-information and secret scanning;
 - domain-type and ownership review against the
-  [refined-types policy](refined-types.md);
+  [refinement-types policy](refinement-types.md);
 - zero anonymous numeric literals;
 - formatting, tests, Clippy with warnings denied, and rustdoc with warnings
   denied;

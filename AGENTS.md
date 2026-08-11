@@ -13,7 +13,7 @@ may predate its own review:
 
 - [docs/architecture/core-migration.md](docs/architecture/core-migration.md)
   -- slice admission, trust by construction, the numeric policy.
-- [docs/architecture/refined-types.md](docs/architecture/refined-types.md)
+- [docs/architecture/refinement-types.md](docs/architecture/refinement-types.md)
   -- the type discipline: predicates, borders, the three states of bytes,
   dependence with reason, no ducks at the border.
 - [docs/security/credential-custody.md](docs/security/credential-custody.md)
@@ -40,7 +40,7 @@ in your own working notes:
    typed error names it, and what does the caller safely do next?
 
 If any answer is missing, the slice is not ready; read the specification
-section again. The design questions in the refined-types policy's
+section again. The design questions in the refinement-types policy's
 "Review questions" are the checklist for both writing and review.
 
 ## The floor
