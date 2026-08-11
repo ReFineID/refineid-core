@@ -116,11 +116,13 @@ deployment details.
   and ISO/IEC 7816-4 and -8. Secret, personal-information, protocol, and
   dependency scans were performed for this slice.
 - **Certificate public key.** Publication under Apache-2.0 directed on
-  2026-08-11 for the `refineid-x509` slice: `Spki::from_certificate`,
-  which extracts and classifies the SubjectPublicKeyInfo of a certificate
-  and exposes its DER. Only the public key is parsed; full X.509 stays
-  out of the core, and the DER walk reuses `refineid-ber` rather than a
-  new dependency. Reconstructed against the standards, covered by unit
+  2026-08-11 for the `refineid-x509` slice: `PublicKey::from_certificate`,
+  which reconstructs a certificate's SubjectPublicKeyInfo into a typed
+  public key -- RSA, or a NIST curve -- validating each invariant at the
+  boundary and re-serialising canonical SPKI bytes for a host verifier, so
+  no raw DER survives. Only the public key is parsed; full X.509 stays out
+  of the core, and the DER walk reuses `refineid-ber` rather than a new
+  dependency. Reconstructed against the standards, covered by unit
   tests over synthetic certificates, and validated on hardware: the newer
   card's certificate slots classified as their issued P-384, RSA-3072, and
   RSA-4096 keys. Constants are traced to RFC 5280,

@@ -261,13 +261,17 @@ and the confidentiality-template table) and covered by scripted-transport
 tests. This slice is hardware-validated (see below).
 
 The eleventh slice admits a SubjectPublicKeyInfo layer in
-`refineid-x509`: `Spki::from_certificate` navigates a certificate's DER to
-the public key, classifies it -- RSA with its modulus size, or a NIST
-curve -- and exposes the SPKI bytes for a host verifier, pairing a
-certificate the read path returns with the right signing chain. It parses
-only the SubjectPublicKeyInfo; full X.509 -- validity, extensions,
-chains, and revocation -- stays out of the core, and the DER walk is
-built on `refineid-ber`, not a general parser, so no dependency is added.
+`refineid-x509`: a certificate enters as an `UnvalidatedCertificate` (raw
+DER), and `PublicKey::from_certificate` navigates it to the public key and
+reconstructs a typed value -- an `RsaPublicKey` with a validated modulus
+and exponent, or an `EcPublicKey` with its NIST curve and coordinates --
+checking each invariant once at that boundary. No raw DER survives;
+`to_spki_der` re-serialises the SubjectPublicKeyInfo from the typed key for
+a host verifier, and the typed key pairs a certificate the read path
+returns with the right signing chain. It parses only the
+SubjectPublicKeyInfo; full X.509 -- validity, extensions, chains, and
+revocation -- stays out of the core, and the DER walk is built on
+`refineid-ber`, not a general parser, so no dependency is added.
 It is covered by unit tests over synthetic RSA-3072, P-384, and P-256
 certificates, and is hardware-validated (see below). Constants are traced
 to RFC 5280, PKCS#1, and the object identifiers in RFC 5480 and RFC 8017.
