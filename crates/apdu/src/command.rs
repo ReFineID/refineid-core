@@ -446,39 +446,47 @@ impl CredentialCommand {
         Self { bytes, length }
     }
 
-    /// Take custody of pre-assembled credential wire bytes.
+    /// Assemble the secure-messaging-protected form of a credential
+    /// command from the parts its wrap produces: the secure-messaging
+    /// header, the protected body objects, and the expected-length byte.
+    /// The result is the case-4 wire to send to the card, and it lives
+    /// only in this type's zeroizing storage -- the wrapped credential wire
+    /// never passes through an ordinary [`CommandApdu`] or a heap copy on
+    /// the way here.
     ///
-    /// The secure-messaging layer uses this to carry a wrapped credential
-    /// command: it computes the encrypted, authenticated wire and hands it
-    /// over here, and the source buffer is zeroized on every path so no
-    /// second copy of the credential material lingers. Structural validity
-    /// of the wire is the caller's responsibility; the type's contract is
-    /// custody, redaction, and single use.
+    /// `body` is the already-protected wire (the encrypted, authenticated
+    /// objects); it is read, not retained. The caller owns its buffer and
+    /// its erasure, holding it in a zeroizing buffer for its lifetime.
     ///
     /// # Errors
     ///
-    /// Returns [`CredentialBodyError`] when `source` is empty or exceeds
+    /// Returns [`CredentialBodyError::Empty`] when `body` is empty, or
+    /// [`CredentialBodyError::TooLong`] when the assembled wire exceeds
     /// [`CREDENTIAL_WIRE_MAX`] bytes.
-    pub fn from_wire(source: &mut [u8]) -> Result<Self, CredentialBodyError> {
-        if source.is_empty() {
+    pub fn from_protected_parts(
+        header: CommandHeader,
+        body: &[u8],
+        le: u8,
+    ) -> Result<Self, CredentialBodyError> {
+        if body.is_empty() {
             return Err(CredentialBodyError::Empty);
         }
-        if source.len() > CREDENTIAL_WIRE_MAX {
-            let got = source.len();
-            source.zeroize();
-            return Err(CredentialBodyError::TooLong { got });
+        let total = APDU_HEADER_LEN + LC_LEN + body.len() + LE_LEN;
+        if total > CREDENTIAL_WIRE_MAX {
+            return Err(CredentialBodyError::TooLong { got: total });
         }
-        let length = match u8::try_from(source.len()) {
-            Ok(length) => length,
-            Err(_) => {
-                let got = source.len();
-                source.zeroize();
-                return Err(CredentialBodyError::TooLong { got });
-            }
-        };
+        // The capacity guard above bounds both conversions; they are
+        // fallible so no `as` cast can silently truncate the wire.
+        let lc = u8::try_from(body.len())
+            .map_err(|_overflow| CredentialBodyError::TooLong { got: total })?;
+        let length =
+            u8::try_from(total).map_err(|_overflow| CredentialBodyError::TooLong { got: total })?;
         let mut bytes = [0_u8; CREDENTIAL_WIRE_MAX];
-        bytes[..source.len()].copy_from_slice(source);
-        source.zeroize();
+        bytes[..APDU_HEADER_LEN].copy_from_slice(&header.to_bytes());
+        bytes[APDU_HEADER_LEN] = lc;
+        let body_start = APDU_HEADER_LEN + LC_LEN;
+        bytes[body_start..body_start + body.len()].copy_from_slice(body);
+        bytes[body_start + body.len()] = le;
         Ok(Self { bytes, length })
     }
 
@@ -767,32 +775,39 @@ mod tests {
     }
 
     #[test]
-    fn from_wire_takes_custody_of_wrapped_bytes() {
-        let over_plain = CREDENTIAL_APDU_MAX + 1;
-        let mut source = vec![TEST_P1; over_plain];
-        let command = CredentialCommand::from_wire(&mut source).expect("length is within capacity");
-        assert_eq!(command.len(), over_plain);
-        assert!(
-            source.iter().all(|byte| *byte == 0),
-            "source must be zeroized after custody transfer"
+    fn protected_parts_assemble_the_case_4_wire() {
+        let body = [TEST_P1, TEST_P2, TEST_INS];
+        let command = CredentialCommand::from_protected_parts(header(), &body, TEST_LE)
+            .expect("within capacity");
+        assert_eq!(
+            command.len(),
+            APDU_HEADER_LEN + LC_LEN + body.len() + LE_LEN
         );
-        command.expose_wire(|wire| assert_eq!(wire.len(), over_plain));
+        assert!(!command.is_empty());
+
+        command.expose_wire(|wire| {
+            let mut expected = expected_prefix();
+            expected.push(u8::try_from(body.len()).expect("fixture body fits an Lc byte"));
+            expected.extend_from_slice(&body);
+            expected.push(TEST_LE);
+            assert_eq!(wire, expected.as_slice());
+        });
     }
 
     #[test]
-    fn from_wire_boundaries_are_enforced() {
-        let mut empty: [u8; 0] = [];
+    fn protected_parts_boundaries_are_enforced() {
         assert!(matches!(
-            CredentialCommand::from_wire(&mut empty),
+            CredentialCommand::from_protected_parts(header(), &[], TEST_LE),
             Err(CredentialBodyError::Empty)
         ));
 
-        let over_len = CREDENTIAL_WIRE_MAX + 1;
-        let mut over = vec![TEST_P1; over_len];
+        // A body that overflows the fixed wire capacity is refused, not
+        // truncated. The reported length is the assembled-wire length.
+        let over = vec![TEST_P1; CREDENTIAL_WIRE_MAX];
+        let over_total = APDU_HEADER_LEN + LC_LEN + over.len() + LE_LEN;
         assert!(matches!(
-            CredentialCommand::from_wire(&mut over),
-            Err(CredentialBodyError::TooLong { got }) if got == over_len
+            CredentialCommand::from_protected_parts(header(), &over, TEST_LE),
+            Err(CredentialBodyError::TooLong { got }) if got == over_total
         ));
-        assert!(over.iter().all(|byte| *byte == 0));
     }
 }

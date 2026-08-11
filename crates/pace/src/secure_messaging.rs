@@ -323,14 +323,15 @@ impl<T: CardTransport> CardTransport for SmTransport<T> {
         &mut self,
         command: CredentialCommand,
     ) -> Result<TransportOutcome, Self::Error> {
-        let wrapped = command.expose_wire(|plain| {
-            let (header, body) = self.wrap(plain)?;
-            CommandApdu::case_4(header, &body, SM_LE_ANY)
-                .map_err(|_too_long| SmError::CommandTooLong)
-        })?;
-        let mut wire = wrapped.as_bytes().to_vec();
-        let wrapped_credential =
-            CredentialCommand::from_wire(&mut wire).map_err(|_too_long| SmError::CommandTooLong)?;
+        // Wrap the credential command, then assemble the protected wire
+        // straight into custody storage. The wrapped wire never lands in an
+        // ordinary CommandApdu or a heap copy: the protected body is held
+        // in a zeroizing buffer only until it is copied into the wrapped
+        // credential command.
+        let (header, body) = command.expose_wire(|plain| self.wrap(plain))?;
+        let body = Zeroizing::new(body);
+        let wrapped_credential = CredentialCommand::from_protected_parts(header, &body, SM_LE_ANY)
+            .map_err(|_too_long| SmError::CommandTooLong)?;
         let raw = self
             .inner
             .transmit_credential(wrapped_credential)
