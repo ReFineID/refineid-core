@@ -27,11 +27,11 @@ chaining, follows in a later slice.
 
 The PSS path is hardware-validated: on the older card the authentication
 key produced a PSS signature that verified against the authentication
-certificate, with the PIN counter unconsumed, which exercises the whole
-citizen signing choreography the PKCS#1 chain shares. The remaining
-chains (PKCS#1, ECDSA, and the organizational inline-digest form) rest on
-scripted-transport tests and, for the organizational chain, the behaviour
-reference, until each is observed on hardware. Constants and the command
-choreography are traced to the
+certificate, which exercises the whole citizen signing choreography the
+PKCS#1 chain shares. The remaining chains (PKCS#1, ECDSA, and the
+organizational inline-digest form) rest on scripted-transport tests and,
+for the organizational chain, the behaviour reference, until each is
+observed on hardware. Constants and the command choreography are traced
+to the
 [DVV FINEID specifications](https://dvv.fi/en/fineid-specifications) (S1
 sections 3.6 through 3.8, S4-1, S4-2) and ISO/IEC 7816-8.

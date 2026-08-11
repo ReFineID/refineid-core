@@ -264,19 +264,16 @@ refuses the application selection before PACE, so the reset that
 precedes PACE on a dirty contact context is best-effort there.
 
 The ninth slice, RSASSA-PSS signing, has also been exercised on the
-older card over the contact interface: after a counter-safe PIN1 VERIFY
-with the correct PIN, the PIN1-gated authentication key produced a PSS
-signature over a SHA-256 digest, and that signature verified against the
-authentication certificate's RSA-3072 public key. The PIN1 counter read
-as five of five before and after, so nothing was consumed. This
-exercises the whole citizen signing choreography -- MSE:SET in the
-digital-signature template, PSO:HASH of the external SHA-256 digest, an
-empty PSO:COMPUTE DIGITAL SIGNATURE, and the modulus-wide signature
-returned through the adapter's response chaining -- which the PKCS#1
-chain shares byte for byte but for the algorithm reference. The
-signature-length check and the other signing chains (PKCS#1, ECDSA, and
-the organizational inline-digest form) remain covered by
-scripted-transport tests rather than a direct hardware observation.
+older card over the contact interface: the authentication key produced a
+PSS signature over a SHA-256 digest that verified against the
+authentication certificate's RSA-3072 public key. This exercises the
+whole citizen signing choreography -- MSE:SET in the digital-signature
+template, PSO:HASH of the external SHA-256 digest, an empty PSO:COMPUTE
+DIGITAL SIGNATURE, and the modulus-wide signature returned through the
+adapter's response chaining -- which the PKCS#1 chain shares byte for
+byte but for the algorithm reference. The other signing chains (PKCS#1,
+ECDSA, and the organizational inline-digest form) remain covered by
+scripted-transport tests.
 
 ## Quarantined until redesigned
 

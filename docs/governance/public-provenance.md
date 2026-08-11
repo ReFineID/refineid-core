@@ -99,8 +99,8 @@ deployment details.
   cross-checked against the behaviour reference and the specification's
   algorithm-reference table. Validated on hardware: the older card's
   authentication key produced a PSS signature that verified against the
-  authentication certificate, with the PIN counter unconsumed. Constants
-  are traced to the DVV FINEID specifications (S1 section 3.6.3 Table 6)
+  authentication certificate. Constants are traced to the DVV FINEID
+  specifications (S1 section 3.6.3 Table 6)
   and ISO/IEC 7816-8. Secret, personal-information, protocol, and
   dependency scans were performed for this slice.
 
