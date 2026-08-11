@@ -59,7 +59,8 @@ Constraints are traced to the
 the ISO/IEC 7816 series. See
 [credential custody](docs/security/credential-custody.md),
 the [core migration policy](docs/architecture/core-migration.md),
-[public provenance](docs/governance/public-provenance.md), and the
+[public provenance](docs/governance/public-provenance.md), the
+[FINEID specifications](docs/reference/specifications.md), and the
 [supported cards](docs/reference/supported-cards.md).
 
 ## Build and check
