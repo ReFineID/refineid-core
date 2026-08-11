@@ -27,78 +27,120 @@ const TAG_TOKEN_INFO_LABEL_IMPLICIT: u16 = 0x80;
 
 /// Subset of PKCS#15 `TokenInfo` that card-status surfaces need, per
 /// ISO/IEC 7816-15 section 8.2.
+///
+/// A value exists only as the result of [`TokenInfo::parse`]; the fields
+/// are private, so the type cannot be built past that trust boundary.
 #[derive(Debug, Clone)]
 pub struct TokenInfo {
-    /// `TokenInfo.version`: the structure's integer version.
-    pub version: Option<u32>,
-    /// `TokenInfo.serialNumber` as a hex string: the chip-side long
-    /// serial, kept distinct from the plastic-printed and certificate
-    /// serials by the typed forms.
-    pub serial_number_hex: Option<TokenSerial>,
-    /// `TokenInfo.manufacturerID`.
-    pub manufacturer_id: Option<String>,
-    /// `TokenInfo.label`.
-    pub label: Option<String>,
+    version: u32,
+    serial_number_hex: Option<TokenSerial>,
+    manufacturer_id: Option<String>,
+    label: Option<String>,
 }
 
 impl TokenInfo {
-    /// Validating constructor: parse raw EF.TokenInfo bytes into a
-    /// typed `TokenInfo`. This is the trust boundary; the card hands
-    /// raw bytes and construction and validation are one step.
+    /// `TokenInfo.version`: the structure's mandatory integer version.
+    #[must_use]
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// `TokenInfo.serialNumber` as a hex string, when present: the
+    /// chip-side long serial, kept distinct from the plastic-printed and
+    /// certificate serials by the typed form.
+    #[must_use]
+    pub fn serial_number_hex(&self) -> Option<&TokenSerial> {
+        self.serial_number_hex.as_ref()
+    }
+
+    /// `TokenInfo.manufacturerID`, when present.
+    #[must_use]
+    pub fn manufacturer_id(&self) -> Option<&str> {
+        self.manufacturer_id.as_deref()
+    }
+
+    /// `TokenInfo.label`, when present.
+    #[must_use]
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+
+    /// Validating constructor: parse raw EF.TokenInfo bytes into a typed
+    /// `TokenInfo`. This is the trust boundary; the card hands raw bytes
+    /// and construction and validation are one step.
     ///
-    /// Parsing is best-effort within a well-formed outer SEQUENCE:
-    /// malformed or unsupported sub-objects read as absent, because
-    /// cards diverge on which fields they populate. The one hard
-    /// failure is the outer SEQUENCE itself not decoding, so a
-    /// malformed file stays distinct from an absent field.
+    /// The decode is total, not best-effort. Every child of the outer
+    /// SEQUENCE must BER-decode, so a malformed sub-object is a parse
+    /// error rather than a silently absent field. The mandatory `version`
+    /// must be present as an INTEGER. The optional fields are consumed by
+    /// position and tag, so an absent optional never swallows the field
+    /// that follows it. Fields of `TokenInfo` beyond the subset modelled
+    /// here are left untouched.
     ///
     /// # Errors
     ///
-    /// [`BerError`] when the outer SEQUENCE does not decode.
+    /// [`BerError`] when the outer SEQUENCE or any child does not decode,
+    /// or when the mandatory `version` INTEGER is absent.
     pub fn parse(der: &[u8]) -> Result<Self, BerError> {
         let outer = BerTlv::<Sequence>::parse(der)?;
-        let mut info = Self {
-            version: None,
-            serial_number_hex: None,
-            manufacturer_id: None,
-            label: None,
-        };
-        let mut children = BerTlvIter::new(outer.value());
+        let children = BerTlvIter::new(outer.value()).collect::<Result<Vec<_>, _>>()?;
+        let mut next = 0;
 
-        if let Some(Ok(version_any)) = children.next()
-            && let Ok(version_tlv) = version_any.expect::<Integer>()
-        {
-            let mut version: u32 = 0;
-            for &byte in version_tlv.value() {
-                version = (version << u8::BITS) | u32::from(byte);
+        // version: mandatory INTEGER (ISO/IEC 7816-15 section 8.2).
+        let version_tlv = children.get(next).ok_or(BerError::Truncated)?;
+        if version_tlv.tag() != <Integer as BerTag>::TAG {
+            return Err(BerError::UnexpectedTag {
+                expected: <Integer as BerTag>::TAG,
+                got: version_tlv.tag(),
+            });
+        }
+        let mut version: u32 = 0;
+        for &byte in version_tlv.value() {
+            version = (version << u8::BITS) | u32::from(byte);
+        }
+        next += 1;
+
+        // serialNumber: OPTIONAL OCTET STRING.
+        let serial_number_hex = match children.get(next) {
+            Some(tlv) if tlv.tag() == <OctetString as BerTag>::TAG => {
+                next += 1;
+                Some(TokenSerial::new(hex_encode(tlv.value())))
             }
-            info.version = Some(version);
-        }
-        if let Some(Ok(serial_any)) = children.next()
-            && let Ok(serial_tlv) = serial_any.expect::<OctetString>()
-        {
-            info.serial_number_hex = Some(TokenSerial::new(hex_encode(serial_tlv.value())));
-        }
-        // The remaining fields are optional and variably tagged. Pick
-        // out string-shaped fields by tag, and the implicit-tagged
-        // label, best-effort.
-        for entry in children {
-            let Ok(entry) = entry else { continue };
-            if entry.tag() == <Utf8String as BerTag>::TAG
-                || entry.tag() == <PrintableString as BerTag>::TAG
+            _ => None,
+        };
+
+        // manufacturerID: OPTIONAL Label (a UTF-8 or printable string).
+        let manufacturer_id = match children.get(next) {
+            Some(tlv) if is_label_string(tlv.tag()) => {
+                next += 1;
+                Some(String::from_utf8_lossy(tlv.value()).into_owned())
+            }
+            _ => None,
+        };
+
+        // label: OPTIONAL [0]-tagged Label, or a bare Label string.
+        let label = match children.get(next) {
+            Some(tlv)
+                if tlv.tag() == TAG_TOKEN_INFO_LABEL_IMPLICIT || is_label_string(tlv.tag()) =>
             {
-                let text = String::from_utf8_lossy(entry.value()).into_owned();
-                if info.manufacturer_id.is_none() {
-                    info.manufacturer_id = Some(text);
-                } else if info.label.is_none() {
-                    info.label = Some(text);
-                }
-            } else if entry.tag() == TAG_TOKEN_INFO_LABEL_IMPLICIT {
-                info.label = Some(String::from_utf8_lossy(entry.value()).into_owned());
+                Some(String::from_utf8_lossy(tlv.value()).into_owned())
             }
-        }
-        Ok(info)
+            _ => None,
+        };
+
+        Ok(Self {
+            version,
+            serial_number_hex,
+            manufacturer_id,
+            label,
+        })
     }
+}
+
+/// Whether `tag` is one of the universal string tags a PKCS#15 `Label`
+/// uses.
+fn is_label_string(tag: u16) -> bool {
+    tag == <Utf8String as BerTag>::TAG || tag == <PrintableString as BerTag>::TAG
 }
 
 #[cfg(test)]
@@ -152,14 +194,29 @@ mod tests {
         tlv(universal_tag(<Sequence as BerTag>::TAG), inner.finish()).expect("fixture encodes")
     }
 
+    /// Encode a TokenInfo SEQUENCE carrying only its mandatory version.
+    fn version_only_der() -> Vec<u8> {
+        let mut inner = BerEncoder::default();
+        inner
+            .push_tlv(
+                universal_tag(<Integer as BerTag>::TAG),
+                [u8::try_from(FIXTURE_VERSION).expect("fixture version fits one byte")],
+            )
+            .expect("fixture encodes");
+        tlv(universal_tag(<Sequence as BerTag>::TAG), inner.finish()).expect("fixture encodes")
+    }
+
     #[test]
     fn parses_the_populated_fields() {
         let info = TokenInfo::parse(&fixture_token_info_der()).expect("fixture parses");
-        assert_eq!(info.version, Some(FIXTURE_VERSION));
-        assert_eq!(info.manufacturer_id.as_deref(), Some(FIXTURE_MANUFACTURER));
-        assert_eq!(info.label.as_deref(), Some(FIXTURE_LABEL));
+        assert_eq!(info.version(), FIXTURE_VERSION);
+        assert_eq!(info.manufacturer_id(), Some(FIXTURE_MANUFACTURER));
+        assert_eq!(info.label(), Some(FIXTURE_LABEL));
 
-        let serial_hex = info.serial_number_hex.expect("fixture carries a serial");
+        let serial_hex = info
+            .serial_number_hex()
+            .cloned()
+            .expect("fixture carries a serial");
         let rendered = render_token_serial(serial_hex);
         assert_eq!(rendered, FIXTURE_SERIAL_TEXT);
         let printed = derive_printed_serial(&rendered).expect("fixture shape derives");
@@ -167,13 +224,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_fields_read_as_absent() {
-        let der = tlv(universal_tag(<Sequence as BerTag>::TAG), []).expect("fixture encodes");
-        let info = TokenInfo::parse(&der).expect("empty sequence parses");
-        assert_eq!(info.version, None);
-        assert!(info.serial_number_hex.is_none());
-        assert!(info.manufacturer_id.is_none());
-        assert!(info.label.is_none());
+    fn optional_fields_read_as_absent() {
+        let info = TokenInfo::parse(&version_only_der()).expect("version-only sequence parses");
+        assert_eq!(info.version(), FIXTURE_VERSION);
+        assert!(info.serial_number_hex().is_none());
+        assert!(info.manufacturer_id().is_none());
+        assert!(info.label().is_none());
     }
 
     #[test]
@@ -182,5 +238,11 @@ mod tests {
             tlv(universal_tag(<Integer as BerTag>::TAG), [1_u8]).expect("fixture encodes");
         assert!(TokenInfo::parse(&not_a_sequence).is_err());
         assert!(TokenInfo::parse(&[]).is_err());
+    }
+
+    #[test]
+    fn a_missing_mandatory_version_is_a_hard_error() {
+        let empty = tlv(universal_tag(<Sequence as BerTag>::TAG), []).expect("fixture encodes");
+        assert!(TokenInfo::parse(&empty).is_err());
     }
 }

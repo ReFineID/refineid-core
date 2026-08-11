@@ -303,9 +303,11 @@ fn token_info_reads_and_parses() {
     ]);
 
     let info = transport.read_token_info().expect("scripted read succeeds");
-    assert_eq!(info.version, Some(1));
+    assert_eq!(info.version(), 1);
     let serial = refineid_pkcs15::render_token_serial(
-        info.serial_number_hex.expect("fixture carries a serial"),
+        info.serial_number_hex()
+            .cloned()
+            .expect("fixture carries a serial"),
     );
     assert_eq!(serial, "DEMO0001AB1234567");
     transport.assert_drained();
