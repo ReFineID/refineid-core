@@ -214,10 +214,10 @@ impl Yi {
 pub struct T0 {
     /// High nibble: Y1, the presence bitmap for group 1's
     /// (TA1, TB1, TC1, TD1) interface bytes.
-    pub y1: Yi,
+    y1: Yi,
     /// Low nibble: K, the count of historical bytes following
     /// the interface byte chain. Range 0..=15 by construction.
-    pub historical_byte_count: u8,
+    historical_byte_count: u8,
 }
 
 impl T0 {
@@ -228,6 +228,18 @@ impl T0 {
             y1: Yi::from_nibble(b >> NIBBLE_BITS),
             historical_byte_count: b & NIBBLE_MASK,
         }
+    }
+
+    /// Y1: which of group 1's (TA1, TB1, TC1, TD1) interface bytes follow.
+    #[must_use]
+    pub const fn y1(self) -> Yi {
+        self.y1
+    }
+
+    /// K: the count of historical bytes after the interface chain (0..=15).
+    #[must_use]
+    pub const fn historical_byte_count(self) -> u8 {
+        self.historical_byte_count
     }
 
     /// Re-emit the wire byte.
@@ -463,13 +475,13 @@ impl TdByte {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InterfaceByteGroup {
     /// TA: present iff the previous Yi had `ta_present()`.
-    pub ta: Option<TaByte>,
+    ta: Option<TaByte>,
     /// TB.
-    pub tb: Option<TbByte>,
+    tb: Option<TbByte>,
     /// TC.
-    pub tc: Option<TcByte>,
+    tc: Option<TcByte>,
     /// TD; when present, its `next_yi` continues the chain.
-    pub td: Option<TdByte>,
+    td: Option<TdByte>,
 }
 
 impl InterfaceByteGroup {
@@ -482,6 +494,30 @@ impl InterfaceByteGroup {
             tc: None,
             td: None,
         }
+    }
+
+    /// TA for this group, when present.
+    #[must_use]
+    pub const fn ta(self) -> Option<TaByte> {
+        self.ta
+    }
+
+    /// TB for this group, when present.
+    #[must_use]
+    pub const fn tb(self) -> Option<TbByte> {
+        self.tb
+    }
+
+    /// TC for this group, when present.
+    #[must_use]
+    pub const fn tc(self) -> Option<TcByte> {
+        self.tc
+    }
+
+    /// TD for this group; its `next_yi` continues the interface chain.
+    #[must_use]
+    pub const fn td(self) -> Option<TdByte> {
+        self.td
     }
 }
 
@@ -622,9 +658,9 @@ impl HistoricalBytes {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompactTlv {
     /// Tag (0..=15) from the header's high nibble.
-    pub tag: u8,
+    tag: u8,
     /// Value bytes (length from the header's low nibble).
-    pub value: Vec<u8>,
+    value: Vec<u8>,
 }
 
 /// Compact-TLV tag for the country/issuer indicator (ISO 7816-4 §8.1.1).
@@ -646,6 +682,18 @@ const CTLV_TAG_CARD_CAPABILITIES: u8 = 0x7;
 const CTLV_TAG_STATUS: u8 = 0x8;
 
 impl CompactTlv {
+    /// The compact-TLV tag (0..=15), from the header byte's high nibble.
+    #[must_use]
+    pub const fn tag(&self) -> u8 {
+        self.tag
+    }
+
+    /// The value bytes; their length is the header byte's low nibble.
+    #[must_use]
+    pub fn value(&self) -> &[u8] {
+        &self.value
+    }
+
     /// Lift this raw entry into a typed [`HistoricalDataObject`] by
     /// its ISO 7816-4 §8.1.1 tag. Structured tags (card service
     /// data, card capabilities, status indicator, country) decode
