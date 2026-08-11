@@ -42,7 +42,7 @@ mod public_contract_tests {
     use serde::{Serialize, de::DeserializeOwned};
     use zeroize::{Zeroize, ZeroizeOnDrop};
 
-    use super::{Can, PaceSession, UnvalidatedCan};
+    use super::{Can, PaceSession, Ssc, UnvalidatedCan};
     use crate::crypto::symmetric::Aes256Key;
 
     trait AmbiguousIfImplemented<Disambiguator, Marker> {
@@ -107,5 +107,11 @@ mod public_contract_tests {
         let _ = <Aes256Key as AmbiguousIfImplemented<_, CopyMarker>>::marker;
         let _ = <Aes256Key as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
         let _ = <Aes256Key as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+
+        // The send sequence counter has one owner that advances with the
+        // card; a copy could advance independently and reuse a counter
+        // value, so it is neither Copy nor Clone.
+        let _ = <Ssc as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <Ssc as AmbiguousIfImplemented<_, CopyMarker>>::marker;
     }
 }

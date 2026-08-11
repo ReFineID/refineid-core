@@ -158,7 +158,12 @@ impl core::fmt::Debug for PaceSession {
 /// which are also block-sized and also start all-zero, so the counter
 /// cannot be fed where one of those belongs, and the increment lives in
 /// one place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Neither `Copy` nor `Clone`: the counter has a single owner that
+/// advances in lockstep with the card. A duplicate could advance
+/// independently, and a reused counter repeats the CBC initialisation
+/// vector and the CMAC input under the session key.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Ssc([u8; AES_BLOCK]);
 
 impl Ssc {
