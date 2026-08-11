@@ -288,9 +288,9 @@ retry counter was consumed and no credential was locked. The counter
 read as pristine before each verification and as verified after. The
 reconstruction required no change to pass on either generation or
 either interface. The earlier Gemalto MultiApp v3.0 (FINEID S4-1 v3.0)
-citizen generation and the Idemia Cosmo X (FINEID S1 v5.0) organizational
-card were not available; the [supported cards](../reference/supported-cards.md)
-reference lists all four with their answer-to-reset identifiers.
+citizen generation and the organizational cards were not available; the
+[supported cards](../reference/supported-cards.md) reference lists the
+FINEID certificate cards with their answer-to-reset identifiers.
 
 Three behaviours the validation recorded, for the transport adapters
 that remain outside this tree: the newer card requires the PKCS#15
