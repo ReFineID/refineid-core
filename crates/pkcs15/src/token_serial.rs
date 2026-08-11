@@ -94,13 +94,6 @@ impl TokenSerial {
     }
 }
 
-impl Deref for TokenSerial {
-    type Target = str;
-    fn deref(&self) -> &str {
-        &self.0
-    }
-}
-
 impl AsRef<str> for TokenSerial {
     fn as_ref(&self) -> &str {
         &self.0

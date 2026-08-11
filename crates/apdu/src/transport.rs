@@ -38,16 +38,10 @@ pub struct ResponseApdu {
 }
 
 impl ResponseApdu {
-    /// The status bytes combined into their sixteen-bit value. Prefer
-    /// [`ResponseApdu::status_word`] for typed matching; the raw value is
-    /// kept available for diagnostics.
-    #[must_use]
-    pub const fn sw(&self) -> u16 {
-        u16::from_be_bytes([self.sw1, self.sw2])
-    }
-
-    /// Decoded status word. This is the canonical accessor; consumers
-    /// match on the typed enum rather than compare raw bytes.
+    /// Decoded status word: the one accessor for the response status.
+    /// Consumers match on the typed enum rather than compare raw bytes,
+    /// and reach the raw value through [`StatusWord::as_u16`] when a
+    /// diagnostic needs it.
     #[must_use]
     pub const fn status_word(&self) -> StatusWord {
         StatusWord::from_bytes(self.sw1, self.sw2)
@@ -296,7 +290,6 @@ mod tests {
     fn response_status_helpers_project_the_typed_word() {
         let ok = success_response();
         assert!(ok.is_ok());
-        assert_eq!(ok.sw(), StatusWord::Success.as_u16());
         assert_eq!(ok.status_word(), StatusWord::Success);
 
         let [sw1, sw2] = StatusWord::SecurityNotSatisfied.as_u16().to_be_bytes();
