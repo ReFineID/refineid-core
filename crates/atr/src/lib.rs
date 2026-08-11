@@ -919,14 +919,16 @@ impl CardCapabilities {
     /// supported. `None` when the byte is absent.
     #[must_use]
     pub fn supports_command_chaining(&self) -> Option<bool> {
-        self.command_chaining().map(|b| b & CARD_CAP_COMMAND_CHAINING != 0)
+        self.command_chaining()
+            .map(|b| b & CARD_CAP_COMMAND_CHAINING != 0)
     }
 
     /// b7 of the command-chaining byte: extended `Lc`/`Le` fields are
     /// supported. `None` when the byte is absent.
     #[must_use]
     pub fn supports_extended_length(&self) -> Option<bool> {
-        self.command_chaining().map(|b| b & CARD_CAP_EXTENDED_LENGTH != 0)
+        self.command_chaining()
+            .map(|b| b & CARD_CAP_EXTENDED_LENGTH != 0)
     }
 }
 
@@ -1334,8 +1336,7 @@ mod tests {
     /// Pre-issuing data length in the Thales ATR (compact-TLV tag 6).
     const THALES_PRE_ISSUING_LEN: usize = 5;
     /// Pre-issuing data bytes in the Thales ATR (ISO-opaque interior).
-    const THALES_PRE_ISSUING_DATA: [u8; THALES_PRE_ISSUING_LEN] =
-        [0xB0, 0x85, 0x05, 0x00, 0x11];
+    const THALES_PRE_ISSUING_DATA: [u8; THALES_PRE_ISSUING_LEN] = [0xB0, 0x85, 0x05, 0x00, 0x11];
     /// Country / national-use value length in the Thales ATR (tag 1).
     const THALES_COUNTRY_VALUE_LEN: usize = 2;
     /// ISO 7816-4 normal-completion status word high byte (SW1 of 9000h).
@@ -1519,8 +1520,7 @@ mod tests {
         const NOT_DIRECT_OR_INVERSE: u8 = 0x00;
         // Second byte is the T0 format byte (0 = no interface / historical
         // bytes); the parse fails on the TS byte before reading it.
-        let err =
-            Atr::new([NOT_DIRECT_OR_INVERSE, 0]).expect_err("invalid TS byte is rejected");
+        let err = Atr::new([NOT_DIRECT_OR_INVERSE, 0]).expect_err("invalid TS byte is rejected");
         assert_eq!(
             err,
             AtrError::InvalidConvention {
