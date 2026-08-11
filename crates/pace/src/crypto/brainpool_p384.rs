@@ -115,15 +115,11 @@ const SEC1_UNCOMPRESSED_LEN: usize = 1 + COORD_LEN + COORD_LEN;
 const SEC1_UNCOMPRESSED_TAG: u8 = 0x04;
 
 impl Sec1UncompressedPoint {
-    /// Borrow the ninety-seven encoded bytes.
+    /// Borrow the encoded point bytes, to feed the BER encoder. No
+    /// `AsRef<[u8]>`: the byte view is named, not a shape a caller can pass
+    /// wherever bytes are welcome.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; SEC1_UNCOMPRESSED_LEN] {
-        &self.0
-    }
-}
-
-impl AsRef<[u8]> for Sec1UncompressedPoint {
-    fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
@@ -150,7 +146,9 @@ impl AffinePoint {
         }
     }
 
-    /// `true` when this is the point at infinity.
+    /// `true` when this is the point at infinity. Test-only: the handshake
+    /// reads a point's coordinates, never queries this predicate.
+    #[cfg(test)]
     #[must_use]
     pub const fn is_infinity(&self) -> bool {
         self.coords.is_none()
@@ -197,7 +195,9 @@ impl AffinePoint {
         point.is_on_curve().then_some(point)
     }
 
-    /// Point negation: `-(x, y) = (x, -y mod p)`.
+    /// Point negation: `-(x, y) = (x, -y mod p)`. Test-only: used by the
+    /// curve-law property tests, not by the handshake.
+    #[cfg(test)]
     #[must_use]
     pub fn neg(&self) -> Self {
         match &self.coords {

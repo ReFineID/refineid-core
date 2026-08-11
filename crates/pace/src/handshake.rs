@@ -130,14 +130,18 @@ const TAG_PUBLIC_KEY_POINT: u8 = 0x86;
 
 /// The two session keys and the send sequence counter a completed PACE
 /// handshake produces.
-#[derive(Clone)]
+///
+/// Not clonable: one PACE run establishes one channel, and duplicating the
+/// keys would let two channels share a send sequence counter -- a repeated
+/// CBC IV and CMAC input. The fields are crate-private; the only sink is
+/// [`crate::SmTransport::new`], which consumes the session.
 pub struct PaceSession {
     /// The AES-256 secure-messaging encryption key.
-    pub k_enc: Aes256Key,
+    pub(crate) k_enc: Aes256Key,
     /// The AES-256 secure-messaging message-authentication key.
-    pub k_mac: Aes256Key,
+    pub(crate) k_mac: Aes256Key,
     /// The send sequence counter, initially zero.
-    pub ssc: Ssc,
+    pub(crate) ssc: Ssc,
 }
 
 impl core::fmt::Debug for PaceSession {
@@ -274,7 +278,8 @@ pub fn run_pace_with_can<T: CardTransport>(
     can: Can,
 ) -> Result<PaceSession, PaceError<T::Error>> {
     set_authentication_template(transport, PASSWORD_REF_CAN)?;
-    let nonce = get_encrypted_nonce(transport, &can)?;
+    // Own the mapping nonce in a scrubbed buffer for its whole lifetime.
+    let nonce = Zeroizing::new(get_encrypted_nonce(transport, &can)?);
     let state = map_nonce_and_key_agreement(transport, &nonce)?;
     run_mutual_authentication(transport, state)
 }
@@ -336,8 +341,13 @@ fn get_encrypted_nonce<T: CardTransport>(
 
     let k_pi = kdf_aes256(can.password_bytes(), KdfParam::Password);
     let ciphertext = Ciphertext::<AesCbc>::new(inner.value().to_vec());
-    let plaintext = aes256_cbc_decrypt_no_padding(k_pi.as_bytes(), &ZERO_IV, &ciphertext)
-        .map_err(|_unaligned| PaceError::UnexpectedResponse("encrypted nonce not block-aligned"))?;
+    // The decrypted nonce is the PACE mapping secret; erase the heap
+    // buffer that carried it once the fixed-width nonce is lifted out.
+    let plaintext = Zeroizing::new(
+        aes256_cbc_decrypt_no_padding(k_pi.as_bytes(), &ZERO_IV, &ciphertext).map_err(
+            |_unaligned| PaceError::UnexpectedResponse("encrypted nonce not block-aligned"),
+        )?,
+    );
     let nonce: [u8; NONCE_LEN] = plaintext
         .as_slice()
         .try_into()
@@ -358,7 +368,7 @@ fn map_nonce_and_key_agreement<T: CardTransport>(
         .ok_or(PaceError::InvalidPoint)?;
     let payload = refineid_ber::tlv(
         TAG_DYNAMIC_AUTH,
-        refineid_ber::tlv(TAG_MAP_PCD_PUBLIC, x_pcd_bytes)?,
+        refineid_ber::tlv(TAG_MAP_PCD_PUBLIC, x_pcd_bytes.as_bytes())?,
     )?;
     let command = GeneralAuthenticate {
         chain: true,
@@ -382,7 +392,7 @@ fn map_nonce_and_key_agreement<T: CardTransport>(
         .ok_or(PaceError::InvalidPoint)?;
     let payload = refineid_ber::tlv(
         TAG_DYNAMIC_AUTH,
-        refineid_ber::tlv(TAG_KEY_AGREE_PCD_PUBLIC, u_pcd_bytes)?,
+        refineid_ber::tlv(TAG_KEY_AGREE_PCD_PUBLIC, u_pcd_bytes.as_bytes())?,
     )?;
     let command = GeneralAuthenticate {
         chain: true,
@@ -455,7 +465,9 @@ fn encode_auth_token(point: &AffinePoint) -> Option<Vec<u8>> {
     let point_bytes = point.encode_uncompressed()?;
     let mut inner = refineid_ber::BerEncoder::with_capacity(PACE_MECHANISM_OID.len());
     inner.push_tlv(TAG_ASN1_OID, PACE_MECHANISM_OID).ok()?;
-    inner.push_tlv(TAG_PUBLIC_KEY_POINT, point_bytes).ok()?;
+    inner
+        .push_tlv(TAG_PUBLIC_KEY_POINT, point_bytes.as_bytes())
+        .ok()?;
     refineid_ber::tlv2(TAG_PUBLIC_KEY_TEMPLATE, inner.finish()).ok()
 }
 

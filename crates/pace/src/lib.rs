@@ -24,7 +24,7 @@
 
 pub mod can;
 pub mod commands;
-pub mod crypto;
+pub(crate) mod crypto;
 pub mod handshake;
 pub mod rng;
 pub mod secure_messaging;
@@ -42,7 +42,8 @@ mod public_contract_tests {
     use serde::{Serialize, de::DeserializeOwned};
     use zeroize::{Zeroize, ZeroizeOnDrop};
 
-    use super::{Can, UnvalidatedCan};
+    use super::{Can, PaceSession, UnvalidatedCan};
+    use crate::crypto::symmetric::Aes256Key;
 
     trait AmbiguousIfImplemented<Disambiguator, Marker> {
         fn marker() {}
@@ -89,5 +90,22 @@ mod public_contract_tests {
         let _ = <UnvalidatedCan as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
         let _ = <UnvalidatedCan as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
         let _ = <UnvalidatedCan as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
+
+        // A duplicated session reuses the send-sequence counter, which
+        // voids the CBC/CMAC integrity of every message under the key.
+        // The session must therefore be unique by construction: no Clone,
+        // no Copy, and no serialisation that would let it be revived.
+        let _ = <PaceSession as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <PaceSession as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <PaceSession as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <PaceSession as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+
+        // The session key is custody, not data: it erases on drop and can
+        // neither be copied nor serialised out of the crate.
+        require_zeroize_on_drop::<Aes256Key>();
+        let _ = <Aes256Key as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <Aes256Key as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <Aes256Key as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <Aes256Key as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
     }
 }

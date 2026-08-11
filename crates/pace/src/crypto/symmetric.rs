@@ -77,20 +77,21 @@ impl KdfParam {
 /// thirty-two-byte array so a key cannot be swapped for a digest or an
 /// initialisation vector by accident. The bytes are reachable only
 /// through [`Aes256Key::as_bytes`].
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct Aes256Key([u8; AES_KEY_LEN]);
 
 impl Aes256Key {
-    /// Borrow the raw key bytes for an AES primitive.
+    /// Borrow the raw key bytes for an AES primitive. Crate-private: a
+    /// session key never leaves the crate as bytes.
     #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; AES_KEY_LEN] {
+    pub(crate) const fn as_bytes(&self) -> &[u8; AES_KEY_LEN] {
         &self.0
     }
 
-    /// Wrap key bytes that did not come from the KDF, rejecting the two
-    /// lost-data sentinels: all-zero, the signature of zeroed memory,
-    /// and all-ones, the signature of erased flash. Neither is ever a
-    /// real key, and using either would make encryption predictable.
+    /// Wrap key bytes that did not come from the KDF. Test-only: in
+    /// production a session key is only ever produced by [`kdf_aes256`],
+    /// so there is no non-test caller for a bytes-in constructor.
+    #[cfg(test)]
     #[must_use]
     pub fn from_bytes(bytes: [u8; AES_KEY_LEN]) -> Option<Self> {
         let all_zero = bytes.iter().all(|&byte| byte == 0);
