@@ -93,6 +93,15 @@ pub enum SmError<E> {
     /// The card's message-authentication tag did not match; the channel
     /// is broken.
     MacMismatch,
+    /// The response carried no secure-messaging protection. On an
+    /// established channel every response carries the protected status
+    /// object and the authentication object (ISO 7816-4; BSI TR-03110-3
+    /// section F); a response without them cannot be authenticated. The
+    /// enclosed status word is unauthenticated -- it may be exactly what
+    /// the card sent or exactly what an active attacker chose, and nothing
+    /// in the response distinguishes the two, so it must never be read as a
+    /// result. The only safe response is to abandon the channel.
+    Unprotected(StatusWord),
     /// A wrapped command exceeded the short form.
     CommandTooLong,
 }
@@ -103,6 +112,7 @@ impl<E: core::fmt::Display> core::fmt::Display for SmError<E> {
             Self::Transport(e) => write!(f, "SM transport: {e}"),
             Self::Malformed(what) => write!(f, "SM: malformed {what}"),
             Self::MacMismatch => f.write_str("SM: card authentication tag did not match"),
+            Self::Unprotected(_) => f.write_str("SM: response carried no authentication"),
             Self::CommandTooLong => f.write_str("SM: wrapped command exceeds the short form"),
         }
     }
@@ -114,7 +124,9 @@ impl<E: TransportErrorExt> TransportErrorExt for SmError<E> {
     fn kind(&self) -> TransportErrorKind {
         match self {
             Self::Transport(error) => error.kind(),
-            Self::Malformed(_) | Self::MacMismatch => TransportErrorKind::ProtocolDesync,
+            Self::Malformed(_) | Self::MacMismatch | Self::Unprotected(_) => {
+                TransportErrorKind::ProtocolDesync
+            }
             Self::CommandTooLong => TransportErrorKind::Backend,
         }
     }
@@ -282,11 +294,13 @@ impl<T: CardTransport> SmTransport<T> {
             TransportOutcome::Response(response) => response,
             other => return Ok(other),
         };
-        // A bare response with no protected body is a transport-level
-        // refusal that passes through unchanged; any protected body must
-        // be unwrapped so the counter stays in step.
+        // Secure messaging protects every response: each carries the
+        // protected status object and the authentication object (ISO
+        // 7816-4; BSI TR-03110-3 section F). A response with an empty body
+        // carries neither, so there is nothing to authenticate; its status
+        // word is unverified and must not pass through as a result.
         if response.body.is_empty() {
-            return Ok(TransportOutcome::Response(response));
+            return Err(SmError::Unprotected(response.status_word()));
         }
         let (body, sw) = self.unwrap(&response.body)?;
         let [sw1, sw2] = sw.as_u16().to_be_bytes();
@@ -678,5 +692,28 @@ mod tests {
             .transmit(&command)
             .expect_err("a tampered tag breaks the channel");
         assert!(matches!(error, SmError::MacMismatch));
+    }
+
+    #[test]
+    fn unprotected_response_is_refused() {
+        // A response with a status word but no protected objects carries no
+        // authentication. The channel must refuse it rather than surface an
+        // unverified status word as a result.
+        let [sw1, sw2] = success_bytes();
+        let mut terminal = SmTransport::new(
+            FixedResponse {
+                response: Some(ResponseApdu {
+                    body: Vec::new(),
+                    sw1,
+                    sw2,
+                }),
+            },
+            session(),
+        );
+        let command = CommandApdu::case_2(read_binary_header(), READ_LE_TWO);
+        let error = terminal
+            .transmit(&command)
+            .expect_err("an unprotected response is refused");
+        assert!(matches!(error, SmError::Unprotected(sw) if sw == StatusWord::Success));
     }
 }
