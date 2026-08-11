@@ -162,9 +162,12 @@ The card holds the private key and performs the private-key operation;
 these commands carry no credential material and use the plain transport
 path, so signing composes over the PACE secure-messaging transport
 unchanged once the gating PIN is verified. The pre-hashed chains fit the
-short form -- the digest is small and the card returns the signature
-through the adapter's chained response -- so no extended-length or
-command-chaining support is needed. RSASSA-PSS follows in a later slice,
+short form. An RSA-3072 signature exceeds the short response, so PSO:CDS
+uses the maximum-length encoding and the adapter chains the 61xx
+response; a P-384 ECDSA signature fits, so PSO:CDS carries its exact
+length as Le, which a T=0 card requires to answer the short response
+directly. So no extended-length support is needed. RSASSA-PSS follows in a
+later slice,
 and PSO:DECIPHER -- whose modulus-wide ciphertext needs command chaining
 -- after that. The wire, algorithm references, and length checks are
 covered by
@@ -265,10 +268,9 @@ certificate the read path returns with the right signing chain. It parses
 only the SubjectPublicKeyInfo; full X.509 -- validity, extensions,
 chains, and revocation -- stays out of the core, and the DER walk is
 built on `refineid-ber`, not a general parser, so no dependency is added.
-It is an offline parser, neither card-mutating nor retry-consuming, so it
-is admitted on unit tests over synthetic RSA-3072, P-384, and P-256
-certificates rather than a hardware observation. Constants are traced to
-RFC 5280, PKCS#1, and the object identifiers in RFC 5480 and RFC 8017.
+It is covered by unit tests over synthetic RSA-3072, P-384, and P-256
+certificates, and is hardware-validated (see below). Constants are traced
+to RFC 5280, PKCS#1, and the object identifiers in RFC 5480 and RFC 8017.
 
 ## Hardware validation
 
@@ -310,6 +312,19 @@ contact: a message encrypted to the authentication certificate's public
 key was recovered by the card's decipher key, which validates the
 PSO:DECIPHER chain together with the command chaining that carries the
 modulus-wide cryptogram.
+
+The newer card, a dual-algorithm card, exercised the SubjectPublicKeyInfo
+layer and the ECDSA signing chain over contact. Its certificate slots
+classified as expected -- P-384 elliptic-curve keys for the primary
+authentication, signature, and CA certificates, and RSA-3072 and RSA-4096
+keys in the alternate slots -- confirming both the elliptic-curve and the
+RSA paths of the parser against issued certificates. The authentication
+key then produced a P-384 ECDSA signature over a SHA-384 digest that
+verified against that certificate. That run first caught a defect the
+scripted tests could not: the card, being T=0, rejected the maximum-
+length Le with a wrong-length status for the short ECDSA response, so the
+signing chain now sends the exact short-form length as Le for a signature
+that fits it, and the maximum encoding only for the wider RSA response.
 
 ## Quarantined until redesigned
 

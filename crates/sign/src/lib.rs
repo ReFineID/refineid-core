@@ -45,7 +45,7 @@ use refineid_apdu::{CardTransport, CommandDataError, ResponseApdu, StatusWord, T
 
 use commands::{
     DecipherAlgRef, ExternalHashValue, MseSet, MseSetCt, PsoComputeDigitalSignature, PsoDecipher,
-    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
+    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef, expected_length_le,
 };
 pub use container::{EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, RsaPssSha256, Signature};
 
@@ -210,11 +210,11 @@ pub trait SignOps: CardTransport {
     ///
     /// Transport failures, a state transition, or a non-success status
     /// word.
-    fn pso_compute_signature(&mut self) -> Result<Vec<u8>, SignError<Self::Error>>
+    fn pso_compute_signature(&mut self, le: u8) -> Result<Vec<u8>, SignError<Self::Error>>
     where
         Self: Sized,
     {
-        let command = PsoComputeDigitalSignature.into_apdu();
+        let command = PsoComputeDigitalSignature.into_apdu(le);
         Ok(self.exchange(&command, "PSO:CDS")?.body)
     }
 
@@ -228,12 +228,13 @@ pub trait SignOps: CardTransport {
     fn pso_compute_signature_over_digest(
         &mut self,
         digest: &[u8],
+        le: u8,
     ) -> Result<Vec<u8>, SignError<Self::Error>>
     where
         Self: Sized,
     {
         let command = PsoComputeDigitalSignature
-            .into_apdu_with_digest(digest)
+            .into_apdu_with_digest(digest, le)
             .map_err(SignError::Command)?;
         Ok(self.exchange(&command, "PSO:CDS")?.body)
     }
@@ -265,6 +266,7 @@ pub trait SignOps: CardTransport {
             SignatureAlgRef::SHA256_RSA_PKCS1,
             key,
             ExternalHashValue::Sha256(digest),
+            expected_length_le(RSA_3072_SIG_BYTES),
         )?;
         if bytes.len() != RSA_3072_SIG_BYTES {
             return Err(SignError::UnexpectedSignatureLength {
@@ -304,6 +306,7 @@ pub trait SignOps: CardTransport {
             SignatureAlgRef::SHA256_RSA_PSS,
             key,
             ExternalHashValue::Sha256(digest),
+            expected_length_le(RSA_3072_SIG_BYTES),
         )?;
         if bytes.len() != RSA_3072_SIG_BYTES {
             return Err(SignError::UnexpectedSignatureLength {
@@ -341,6 +344,7 @@ pub trait SignOps: CardTransport {
             SignatureAlgRef::SHA384_ECDSA,
             key,
             ExternalHashValue::Sha384(digest),
+            expected_length_le(ECDSA_P384_SIG_BYTES),
         )?;
         if bytes.len() != ECDSA_P384_SIG_BYTES {
             return Err(SignError::UnexpectedSignatureLength {
@@ -429,13 +433,16 @@ fn drive_chain<T: SignOps>(
     alg_ref: SignatureAlgRef,
     key: KeyRef,
     hash: ExternalHashValue,
+    le: u8,
 ) -> Result<Vec<u8>, SignError<T::Error>> {
     transport.mse_set(scheme, alg_ref, key)?;
     match scheme {
         SignScheme::Citizen => {
             transport.pso_hash(hash)?;
-            transport.pso_compute_signature()
+            transport.pso_compute_signature(le)
         }
-        SignScheme::Organizational => transport.pso_compute_signature_over_digest(hash.as_bytes()),
+        SignScheme::Organizational => {
+            transport.pso_compute_signature_over_digest(hash.as_bytes(), le)
+        }
     }
 }

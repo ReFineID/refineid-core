@@ -120,8 +120,10 @@ deployment details.
   which extracts and classifies the SubjectPublicKeyInfo of a certificate
   and exposes its DER. Only the public key is parsed; full X.509 stays
   out of the core, and the DER walk reuses `refineid-ber` rather than a
-  new dependency. Reconstructed against the standards and covered by unit
-  tests over synthetic certificates. Constants are traced to RFC 5280,
+  new dependency. Reconstructed against the standards, covered by unit
+  tests over synthetic certificates, and validated on hardware: the newer
+  card's certificate slots classified as their issued P-384, RSA-3072, and
+  RSA-4096 keys. Constants are traced to RFC 5280,
   PKCS#1, and the object identifiers in RFC 5480 and RFC 8017. Secret,
   personal-information, protocol, and dependency scans were performed for
   this slice.

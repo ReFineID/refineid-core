@@ -297,13 +297,26 @@ impl PsoHashExternal {
 #[derive(Debug, Clone, Copy)]
 pub struct PsoComputeDigitalSignature;
 
+/// The Le byte requesting a signature of `sig_bytes`.
+///
+/// A signature that fits the short form asks for its exact length, which a
+/// T=0 card requires and answers directly; the ECDSA signatures take this
+/// path. A signature wider than the short form -- RSA-3072 -- cannot, so it
+/// uses the maximum-length encoding and the adapter chains the 61xx
+/// response.
+#[must_use]
+pub fn expected_length_le(sig_bytes: usize) -> u8 {
+    u8::try_from(sig_bytes).unwrap_or(PSO_CDS_LE_ANY)
+}
+
 impl PsoComputeDigitalSignature {
     /// Serialise the empty-bodied form into a case-2 command APDU: the
     /// card signs the hash previously loaded by [`PsoHashExternal`] and
     /// returns the signature. This ends the citizen chain (FINEID S1 v4.2
-    /// section 3.8); the adapter chains any 61xx response.
+    /// section 3.8). `le` is the expected-length byte (see
+    /// [`expected_length_le`]); the adapter chains any 61xx response.
     #[must_use]
-    pub fn into_apdu(self) -> CommandApdu {
+    pub fn into_apdu(self, le: u8) -> CommandApdu {
         CommandApdu::case_2(
             CommandHeader {
                 class: ApduClass::Plain,
@@ -311,23 +324,28 @@ impl PsoComputeDigitalSignature {
                 p1: PSO_CDS_P1,
                 p2: PSO_CDS_P2,
             },
-            PSO_CDS_LE_ANY,
+            le,
         )
     }
 
     /// Serialise the inline-digest form into a case-4 command APDU
-    /// (`00 2A 9E 9A <Lc> <digest> 00`): the organizational card has no
+    /// (`00 2A 9E 9A <Lc> <digest> <Le>`): the organizational card has no
     /// external-hash PSO:HASH step, so the digest rides inline and the
     /// card signs it directly. The citizen card rejects this shape and the
     /// organizational card rejects the empty form, which is why the
-    /// resolved numbering picks the chain.
+    /// resolved numbering picks the chain. `le` is the expected-length
+    /// byte (see [`expected_length_le`]).
     ///
     /// # Errors
     ///
     /// [`CommandDataError`] never triggers: a digest is at most 64 bytes,
     /// well within the short form. Fallible so the caller stays
     /// fail-closed.
-    pub fn into_apdu_with_digest(self, digest: &[u8]) -> Result<CommandApdu, CommandDataError> {
+    pub fn into_apdu_with_digest(
+        self,
+        digest: &[u8],
+        le: u8,
+    ) -> Result<CommandApdu, CommandDataError> {
         CommandApdu::case_4(
             CommandHeader {
                 class: ApduClass::Plain,
@@ -336,7 +354,7 @@ impl PsoComputeDigitalSignature {
                 p2: PSO_CDS_P2,
             },
             digest,
-            PSO_CDS_LE_ANY,
+            le,
         )
     }
 }
@@ -447,25 +465,25 @@ mod tests {
         ]
     }
 
-    /// The expected empty-bodied PSO:CDS wire: header and expected-length
-    /// byte, no data.
-    fn pso_cds_empty_wire() -> Vec<u8> {
+    /// The expected empty-bodied PSO:CDS wire: header and the expected-
+    /// length byte `le`, no data.
+    fn pso_cds_empty_wire(le: u8) -> Vec<u8> {
         vec![
             ApduClass::Plain.as_byte(),
             PSO_INS,
             PSO_CDS_P1,
             PSO_CDS_P2,
-            PSO_CDS_LE_ANY,
+            le,
         ]
     }
 
     /// The expected inline-digest PSO:CDS wire: header, Lc, the digest,
-    /// then the expected-length byte.
-    fn pso_cds_inline_wire(digest: &[u8]) -> Vec<u8> {
+    /// then the expected-length byte `le`.
+    fn pso_cds_inline_wire(digest: &[u8], le: u8) -> Vec<u8> {
         let mut wire = vec![ApduClass::Plain.as_byte(), PSO_INS, PSO_CDS_P1, PSO_CDS_P2];
         wire.push(digest.len() as u8);
         wire.extend_from_slice(digest);
-        wire.push(PSO_CDS_LE_ANY);
+        wire.push(le);
         wire
     }
 
@@ -553,8 +571,10 @@ mod tests {
     #[test]
     fn pso_cds_empty_matches_the_specified_wire() {
         assert_eq!(
-            PsoComputeDigitalSignature.into_apdu().as_bytes(),
-            pso_cds_empty_wire()
+            PsoComputeDigitalSignature
+                .into_apdu(PSO_CDS_LE_ANY)
+                .as_bytes(),
+            pso_cds_empty_wire(PSO_CDS_LE_ANY)
         );
     }
 
@@ -562,9 +582,24 @@ mod tests {
     fn pso_cds_inline_carries_the_digest_between_lc_and_le() {
         let digest = [FILL; SHA384_LEN];
         let apdu = PsoComputeDigitalSignature
-            .into_apdu_with_digest(&digest)
+            .into_apdu_with_digest(&digest, PSO_CDS_LE_ANY)
             .expect("digest fits the short form");
-        assert_eq!(apdu.as_bytes(), pso_cds_inline_wire(&digest));
+        assert_eq!(
+            apdu.as_bytes(),
+            pso_cds_inline_wire(&digest, PSO_CDS_LE_ANY)
+        );
+    }
+
+    #[test]
+    fn expected_length_le_is_exact_when_it_fits_and_maximal_otherwise() {
+        assert_eq!(
+            super::expected_length_le(crate::ECDSA_P384_SIG_BYTES),
+            crate::ECDSA_P384_SIG_BYTES as u8
+        );
+        assert_eq!(
+            super::expected_length_le(crate::RSA_3072_SIG_BYTES),
+            PSO_CDS_LE_ANY
+        );
     }
 
     #[test]

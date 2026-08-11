@@ -24,7 +24,7 @@ use refineid_apdu::{
 };
 use refineid_sign::commands::{
     DecipherAlgRef, ExternalHashValue, MseSet, MseSetCt, PsoComputeDigitalSignature, PsoDecipher,
-    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
+    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef, expected_length_le,
 };
 use refineid_sign::{
     ECDSA_P384_SIG_BYTES, KeyRef, ORG_QUALIFIED_KEY_REF, RSA_3072_SIG_BYTES, SignError, SignOps,
@@ -60,16 +60,28 @@ fn pso_hash_wire(hash: ExternalHashValue) -> Vec<u8> {
         .to_vec()
 }
 
-fn pso_cds_empty_wire() -> Vec<u8> {
-    PsoComputeDigitalSignature.into_apdu().as_bytes().to_vec()
+fn pso_cds_empty_wire(le: u8) -> Vec<u8> {
+    PsoComputeDigitalSignature.into_apdu(le).as_bytes().to_vec()
 }
 
-fn pso_cds_inline_wire(digest: &[u8]) -> Vec<u8> {
+fn pso_cds_inline_wire(digest: &[u8], le: u8) -> Vec<u8> {
     PsoComputeDigitalSignature
-        .into_apdu_with_digest(digest)
+        .into_apdu_with_digest(digest, le)
         .expect("inline PSO:CDS encodes")
         .as_bytes()
         .to_vec()
+}
+
+/// The expected-length Le for an RSA-3072 signature: it exceeds the short
+/// form, so the maximum encoding.
+fn rsa_le() -> u8 {
+    expected_length_le(RSA_3072_SIG_BYTES)
+}
+
+/// The expected-length Le for a P-384 ECDSA signature: it fits the short
+/// form, so its exact length.
+fn ecdsa_le() -> u8 {
+    expected_length_le(ECDSA_P384_SIG_BYTES)
 }
 
 /// A transport that checks each command against a scripted expectation
@@ -129,7 +141,7 @@ fn citizen_rsa_sha256_drives_the_three_command_chain() {
             pso_hash_wire(ExternalHashValue::Sha256(digest)),
             success(vec![]),
         ),
-        (pso_cds_empty_wire(), success(signature.clone())),
+        (pso_cds_empty_wire(rsa_le()), success(signature.clone())),
     ]);
 
     let result = transport
@@ -157,7 +169,7 @@ fn citizen_ecdsa_p384_signs_over_the_loaded_hash() {
             pso_hash_wire(ExternalHashValue::Sha384(digest)),
             success(vec![]),
         ),
-        (pso_cds_empty_wire(), success(signature.clone())),
+        (pso_cds_empty_wire(ecdsa_le()), success(signature.clone())),
     ]);
 
     let result = transport
@@ -181,7 +193,10 @@ fn organizational_sign_skips_pso_hash_and_carries_the_digest_inline() {
     assert_eq!(mse.last().copied(), Some(ORG_QUALIFIED_KEY_REF));
     let mut transport = Scripted::new(vec![
         (mse, success(vec![])),
-        (pso_cds_inline_wire(&digest), success(signature.clone())),
+        (
+            pso_cds_inline_wire(&digest, ecdsa_le()),
+            success(signature.clone()),
+        ),
     ]);
 
     let result = transport
@@ -211,7 +226,7 @@ fn citizen_rsa_pss_signs_over_the_loaded_hash_under_the_pss_reference() {
             pso_hash_wire(ExternalHashValue::Sha256(digest)),
             success(vec![]),
         ),
-        (pso_cds_empty_wire(), success(signature.clone())),
+        (pso_cds_empty_wire(rsa_le()), success(signature.clone())),
     ]);
 
     let result = transport
@@ -286,7 +301,7 @@ fn an_unexpected_signature_length_is_rejected() {
             pso_hash_wire(ExternalHashValue::Sha256(digest)),
             success(vec![]),
         ),
-        (pso_cds_empty_wire(), success(short)),
+        (pso_cds_empty_wire(rsa_le()), success(short)),
     ]);
 
     let error = transport

@@ -17,7 +17,9 @@ DER walk is built on `refineid-ber`, not a general X.509 parser, so the
 crate adds no new dependency.
 
 The parser is covered by unit tests over synthetic RSA-3072, P-384, and
-P-256 certificates, including the version-absent and truncated cases.
+P-256 certificates, including the version-absent and truncated cases, and
+is hardware-validated: the newer card's certificate slots classified as
+their issued P-384, RSA-3072, and RSA-4096 keys.
 
 Constants are traced to RFC 5280 (the certificate and
 SubjectPublicKeyInfo structure), PKCS#1, and the curve and algorithm

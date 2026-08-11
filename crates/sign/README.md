@@ -31,13 +31,18 @@ chaining (its data field exceeds the short form), and the card returns the
 recovered plaintext. `DecipherAlgRef` names the padding (PKCS#1 v1.5 or
 RSAES-OAEP-SHA256).
 
-The PSS and decipher paths are hardware-validated on the older card: the
-authentication key produced a PSS signature that verified against the
-authentication certificate, and it recovered a message encrypted to that
-certificate. The remaining signing chains (PKCS#1, ECDSA, and the
-organizational inline-digest form) rest on scripted-transport tests and,
-for the organizational chain, the behaviour reference, until each is
-observed on hardware. Constants and the command choreography are traced
-to the
+A signature that fits the short response carries its exact length as Le,
+which a T=0 card requires to answer directly; the wider RSA-3072
+signature uses the maximum-length encoding and the adapter chains the
+61xx response.
+
+The PSS, decipher, and ECDSA paths are hardware-validated: on the older
+card the authentication key produced a PSS signature that verified against
+its certificate and recovered a message encrypted to it, and on the newer
+card the authentication key produced a P-384 ECDSA signature that
+verified against its certificate. The PKCS#1 and organizational
+inline-digest chains rest on scripted-transport tests and, for the
+organizational chain, the behaviour reference, until each is observed on
+hardware. Constants and the command choreography are traced to the
 [DVV FINEID specifications](https://dvv.fi/en/fineid-specifications) (S1
 sections 3.6 through 3.9, S4-1, S4-2) and ISO/IEC 7816-4 and -8.
