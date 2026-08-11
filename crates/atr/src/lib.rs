@@ -1038,6 +1038,15 @@ pub enum AtrError {
     /// TCK was required (a non-T=0 protocol indicator was seen)
     /// but the buffer ended before TCK.
     MissingTck,
+    /// The TCK check character did not match the XOR of T0 through
+    /// the last historical byte (ISO 7816-3 §8.2.5): the ATR is
+    /// corrupt.
+    TckMismatch {
+        /// The check character the bytes imply.
+        expected: u8,
+        /// The check character the buffer carried.
+        got: u8,
+    },
     /// The buffer carried extra bytes after TCK / the last
     /// historical byte.
     TrailingBytes {
@@ -1073,6 +1082,10 @@ impl fmt::Display for AtrError {
             Self::MissingTck => write!(
                 f,
                 "ATR missing TCK: a non-T=0 protocol was indicated but TCK byte is absent"
+            ),
+            Self::TckMismatch { expected, got } => write!(
+                f,
+                "ATR TCK mismatch: check character is {got:#04X}, bytes imply {expected:#04X}"
             ),
             Self::TrailingBytes { expected_end, got } => {
                 write!(
@@ -1174,9 +1187,20 @@ impl Atr {
 
         // TCK present iff any non-T=0 protocol was seen.
         let tck = if any_non_t0_protocol {
-            let b = *bytes.get(idx).ok_or(AtrError::MissingTck)?;
+            let tck_byte = *bytes.get(idx).ok_or(AtrError::MissingTck)?;
+            // ISO 7816-3 §8.2.5: TCK is chosen so the XOR of T0 through
+            // TCK inclusive (TS excluded) is zero. A non-zero residue is a
+            // corrupt ATR, not a card we can trust to identify.
+            let checksummed = bytes.get(1..=idx).ok_or(AtrError::MissingTck)?;
+            let residue = checksummed.iter().fold(0_u8, |acc, &byte| acc ^ byte);
+            if residue != 0 {
+                return Err(AtrError::TckMismatch {
+                    expected: residue ^ tck_byte,
+                    got: tck_byte,
+                });
+            }
             idx = idx.saturating_add(1);
-            Some(TckByte::new(b))
+            Some(TckByte::new(tck_byte))
         } else {
             None
         };
@@ -1562,5 +1586,25 @@ mod tests {
         assert!(atr.supports_non_t0_protocol());
         assert_eq!(atr.tck().expect("TCK present").as_byte(), tck);
         Ok(())
+    }
+
+    #[test]
+    fn a_corrupt_tck_is_rejected() {
+        let t0 = T0 {
+            y1: Yi::from_nibble(YI_TD_BIT),
+            historical_byte_count: 0,
+        }
+        .as_byte();
+        let td1 = TdByte::new(1).as_byte();
+        let correct_tck = t0 ^ td1;
+        // Flip every bit: the result cannot equal the correct check byte.
+        let wrong_tck = correct_tck ^ u8::MAX;
+        let err = Atr::new([Convention::Direct.as_ts(), t0, td1, wrong_tck])
+            .expect_err("a corrupt TCK is rejected");
+        assert!(matches!(
+            err,
+            AtrError::TckMismatch { expected, got }
+                if expected == correct_tck && got == wrong_tck
+        ));
     }
 }
