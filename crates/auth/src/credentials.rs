@@ -28,10 +28,14 @@ pub const PIN1_MIN_LENGTH: usize = 4;
 pub const PIN2_MIN_LENGTH: usize = 6;
 /// Stored length for both PIN roles from FINEID S4-1 v4.2 section 4.1.
 pub const PIN_MAX_LENGTH: usize = 12;
-/// Minimum PUK length: seven-digit activation PUKs exist in the field.
-pub const PUK_MIN_LENGTH: usize = 7;
-/// Maximum PUK length on the supported cards.
-pub const PUK_MAX_LENGTH: usize = 8;
+/// Minimum PUK length from FINEID S4-1 v4.2 section 8.1.5 (EF.AOD): the
+/// unblocking password is eight to twelve digits. The seven-digit
+/// activation code a newer card ships with is a separate, single-use
+/// credential -- not the PUK, and not what unblocks a PIN.
+pub const PUK_MIN_LENGTH: usize = 8;
+/// Maximum PUK length: the stored (padded) block length from FINEID S4-1
+/// v4.2 section 8.1.5, as for the PIN roles.
+pub const PUK_MAX_LENGTH: usize = 12;
 
 /// Explicitly unvalidated secret bytes at an input boundary.
 ///

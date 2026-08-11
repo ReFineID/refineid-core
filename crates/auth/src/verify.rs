@@ -47,9 +47,10 @@ pub const PIN1_REFERENCE_ORGANIZATIONAL: u8 = 0x03;
 /// identifier (FINEID S4-2 v4.0 section 4.2).
 pub const PIN2_REFERENCE_ORGANIZATIONAL: u8 = 0x04;
 
-/// Citizen-card PUK reference: the PIN Unblocking Key in the PKCS#15
-/// numbering. Used to read the PUK's state; the citizen unblock command
-/// carries the PUK in its data field rather than under this reference.
+/// Citizen-card PUK reference: the unblocking password's reference from
+/// FINEID S4-1 v4.2 section 8.1.5 (EF.AOD). Used to read the PUK's state;
+/// the citizen unblock command carries the PUK in its data field rather
+/// than under this reference.
 pub const PUK_REFERENCE: u8 = 0x83;
 /// Organizational-card PUK reference: the PIN PUK security-data-object
 /// identifier (FINEID S4-2 v4.0 section 4.3.2). The organizational
