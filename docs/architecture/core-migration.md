@@ -226,11 +226,16 @@ The eighth slice admits PIN change and unblock in `refineid-auth`:
 
 Every credential travels only as a credential command, consumed exactly
 once, so a change or unblock can never be replayed. These commands are
-card-mutating and retry-consuming, and exhausting the PUK is terminal, so
-no path is described as working against a real card: the wire and the
-two-chain choreography are covered by scripted-transport tests and traced
-to the FINEID S1 (sections 3.11 and 3.12) and S4-2 specifications, and no
-counter-consuming path was run to exhaustion on hardware.
+card-mutating and retry-consuming, and exhausting the PUK is terminal.
+The change path has been observed on a real citizen card: `change_pin1`
+and `change_pin2` each round-tripped the current value to a temporary
+one and back, every change confirmed by an intervening VERIFY, with the
+retry counters at their maximum throughout and the card restored to its
+starting state. The unblock path is deliberately not run on hardware --
+it spends the PUK counter, whose exhaustion is terminal -- so it rests
+on scripted-transport tests traced to the FINEID S1 (sections 3.11 and
+3.12) and S4-2 specifications, and no counter-consuming path was run to
+exhaustion on hardware.
 
 The ninth slice admits RSASSA-PSS signing in `refineid-sign`:
 `sign_prehashed_sha256_rsa_pss` drives the same pre-hashed choreography as
