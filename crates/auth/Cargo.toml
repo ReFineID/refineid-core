@@ -17,6 +17,8 @@ workspace = true
 
 [dependencies]
 refineid-apdu.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]

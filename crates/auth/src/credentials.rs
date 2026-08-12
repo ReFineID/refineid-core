@@ -20,6 +20,9 @@
 //! raw-debuggable.
 
 use core::fmt;
+
+use hmac::{Hmac, KeyInit as _, Mac as _};
+use sha2::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::verify::PinSlot;
@@ -266,30 +269,42 @@ mod sealed {
     impl Sealed for super::Pin2 {}
 }
 
+/// Length of a PIN rejection fingerprint: an HMAC-SHA-256 tag, 32 bytes.
+pub const CACHE_FINGERPRINT_LEN: usize = 32;
+/// Length of the per-process fingerprint key, 32 bytes (256 bits).
+pub const CACHE_FINGERPRINT_KEY_LEN: usize = 32;
+
+/// Domain-separation tag bound into the fingerprint preimage for PIN1.
+const SLOT_TAG_PIN1: u8 = 1;
+/// Domain-separation tag bound into the fingerprint preimage for PIN2.
+const SLOT_TAG_PIN2: u8 = 2;
+
 /// A PIN role whose card rejection a negative cache may remember.
 ///
 /// Sealed: implemented only for [`Pin1`] and [`Pin2`]. The PUK is
 /// deliberately excluded -- it authorises nothing, spends its own retry
 /// counter, and has no cache path.
 ///
-/// The digits are reachable only through the scoped
-/// [`with_digits`](Self::with_digits) borrow -- the same custody idiom as
-/// the credential-command wire. They are lent for one call so a keyed
-/// fingerprint can absorb them, and are never handed out as an owned
-/// value; there is still no public `as_bytes` on a PIN role.
+/// The one digit-facing method returns a keyed *fingerprint* -- an
+/// HMAC-SHA-256 tag computed here, inside the crate that owns the digits.
+/// The digits are absorbed into the MAC and never handed back; a caller
+/// cannot recover them from the tag. So a negative cache can live in
+/// another crate, keying by this fingerprint, without any raw-digit export
+/// and with no public `as_bytes` on a PIN role.
 pub trait CachedPin: sealed::Sealed {
     /// The slot this PIN targets.
     #[must_use]
     fn slot(&self) -> PinSlot;
 
-    /// Number of validated digits.
+    /// The keyed fingerprint of this PIN for the card identified by
+    /// `serial_bytes`, under the process-local `key`. Domain-separated so no
+    /// two `(serial, slot, pin)` triples share a tag.
     #[must_use]
-    fn digit_count(&self) -> usize;
-
-    /// Lend the validated digits to `read` for one call. The reader must
-    /// absorb them (for example into a keyed fingerprint) and must not
-    /// retain them.
-    fn with_digits<R>(&self, read: impl FnOnce(&[u8]) -> R) -> R;
+    fn keyed_fingerprint(
+        &self,
+        serial_bytes: &[u8],
+        key: &[u8; CACHE_FINGERPRINT_KEY_LEN],
+    ) -> [u8; CACHE_FINGERPRINT_LEN];
 }
 
 impl CachedPin for Pin1 {
@@ -297,12 +312,12 @@ impl CachedPin for Pin1 {
         PinSlot::Pin1
     }
 
-    fn digit_count(&self) -> usize {
-        self.0.digit_count()
-    }
-
-    fn with_digits<R>(&self, read: impl FnOnce(&[u8]) -> R) -> R {
-        read(self.digits())
+    fn keyed_fingerprint(
+        &self,
+        serial_bytes: &[u8],
+        key: &[u8; CACHE_FINGERPRINT_KEY_LEN],
+    ) -> [u8; CACHE_FINGERPRINT_LEN] {
+        pin_fingerprint(SLOT_TAG_PIN1, serial_bytes, self.digits(), key)
     }
 }
 
@@ -311,13 +326,42 @@ impl CachedPin for Pin2 {
         PinSlot::Pin2
     }
 
-    fn digit_count(&self) -> usize {
-        self.0.digit_count()
+    fn keyed_fingerprint(
+        &self,
+        serial_bytes: &[u8],
+        key: &[u8; CACHE_FINGERPRINT_KEY_LEN],
+    ) -> [u8; CACHE_FINGERPRINT_LEN] {
+        pin_fingerprint(SLOT_TAG_PIN2, serial_bytes, self.digits(), key)
     }
+}
 
-    fn with_digits<R>(&self, read: impl FnOnce(&[u8]) -> R) -> R {
-        read(self.digits())
-    }
+/// HMAC-SHA-256 over a domain-separated preimage so that no two distinct
+/// `(serial, slot, pin)` triples share a tag: the serial length as a
+/// fixed-width big-endian integer, then the serial, a slot tag, the pin
+/// length, and the pin digits. Fail-closed -- if the key is somehow
+/// unusable, every value collapses to one tag and is refused after the
+/// first rejection, never replayed to the card.
+fn pin_fingerprint(
+    slot_tag: u8,
+    serial_bytes: &[u8],
+    digits: &[u8],
+    key: &[u8; CACHE_FINGERPRINT_KEY_LEN],
+) -> [u8; CACHE_FINGERPRINT_LEN] {
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(key) else {
+        return [0_u8; CACHE_FINGERPRINT_LEN];
+    };
+    let Ok(serial_len) = u32::try_from(serial_bytes.len()) else {
+        return [0_u8; CACHE_FINGERPRINT_LEN];
+    };
+    let Ok(pin_len) = u8::try_from(digits.len()) else {
+        return [0_u8; CACHE_FINGERPRINT_LEN];
+    };
+    mac.update(&serial_len.to_be_bytes());
+    mac.update(serial_bytes);
+    mac.update(&[slot_tag]);
+    mac.update(&[pin_len]);
+    mac.update(digits);
+    mac.finalize().into_bytes().into()
 }
 
 /// Validated PUK value.

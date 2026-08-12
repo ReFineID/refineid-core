@@ -26,10 +26,8 @@
 
 use core::time::Duration;
 
-use hmac::{Hmac, KeyInit as _, Mac as _};
-use refineid_auth::{CachedPin, PinSlot};
+use refineid_auth::{CACHE_FINGERPRINT_KEY_LEN, CACHE_FINGERPRINT_LEN, CachedPin, PinSlot};
 use refineid_pkcs15::TokenSerial;
-use sha2::Sha256;
 use subtle::ConstantTimeEq as _;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -45,23 +43,12 @@ pub const PIN1_CACHE_LIFETIME: Duration = Duration::from_mins(PIN1_CACHE_MINUTES
 /// entry and never refreshed -- a bounded consent window for one signing batch.
 pub const PIN2_CACHE_LIFETIME: Duration = Duration::from_mins(1);
 
-/// SHA-256 emits a 256-bit digest, so an HMAC-SHA-256 fingerprint is 32 bytes.
-const FINGERPRINT_LEN: usize = 32;
-
-/// The per-process HMAC-SHA-256 fingerprint key is 32 bytes (256 bits) drawn
-/// from the operating-system random source.
-const FINGERPRINT_KEY_LEN: usize = 32;
-
-/// Domain-separation tag bound into the fingerprint preimage for the PIN1 slot.
-const SLOT_TAG_PIN1: u8 = 1;
-
-/// Domain-separation tag bound into the fingerprint preimage for the PIN2 slot.
-const SLOT_TAG_PIN2: u8 = 2;
-
 /// Opaque keyed mark standing in for one card-rejected PIN value. Erases
-/// on drop, so a discarded candidate mark leaves no residue.
+/// on drop, so a discarded candidate mark leaves no residue. The mark is
+/// the HMAC the PIN role computes over its own digits; this crate never
+/// sees the digits.
 #[derive(Zeroize, ZeroizeOnDrop)]
-struct RejectedPinFingerprint([u8; FINGERPRINT_LEN]);
+struct RejectedPinFingerprint([u8; CACHE_FINGERPRINT_LEN]);
 
 /// Process-lifetime memory of PIN values a card has already rejected.
 ///
@@ -71,7 +58,7 @@ struct RejectedPinFingerprint([u8; FINGERPRINT_LEN]);
 /// fingerprints cannot be correlated across runs.
 #[derive(Zeroize, ZeroizeOnDrop)]
 pub struct PinSafetyCache {
-    fingerprint_key: [u8; FINGERPRINT_KEY_LEN],
+    fingerprint_key: [u8; CACHE_FINGERPRINT_KEY_LEN],
     rejected_pin1: Vec<RejectedPinFingerprint>,
     rejected_pin2: Vec<RejectedPinFingerprint>,
 }
@@ -83,7 +70,7 @@ impl PinSafetyCache {
     /// Returns the operating-system random-source failure rather than creating a
     /// predictable rejection-fingerprint key.
     pub fn new() -> Result<Self, getrandom::Error> {
-        let mut fingerprint_key = [0_u8; FINGERPRINT_KEY_LEN];
+        let mut fingerprint_key = [0_u8; CACHE_FINGERPRINT_KEY_LEN];
         getrandom::fill(&mut fingerprint_key)?;
         Ok(Self {
             fingerprint_key,
@@ -117,36 +104,15 @@ impl PinSafetyCache {
         }
     }
 
-    /// HMAC-SHA-256 over a domain-separated preimage so that no two distinct
-    /// (serial, slot, pin) triples share a mark: the serial length is bound as a
-    /// fixed-width big-endian integer ahead of the serial, then a slot tag byte,
-    /// then the pin length ahead of the pin. The pin digits are absorbed
-    /// through the scoped [`CachedPin::with_digits`] borrow, never copied
-    /// out.
+    /// The keyed mark for `pin` on the card identified by `serial`. The PIN
+    /// role computes it -- an HMAC-SHA-256 over a domain-separated preimage,
+    /// so no two `(serial, slot, pin)` triples share a mark -- absorbing its
+    /// own digits inside the crate that owns them. This cache only stores
+    /// and compares the resulting tag; it never sees a raw PIN.
     fn fingerprint(&self, serial: &TokenSerial, pin: &impl CachedPin) -> RejectedPinFingerprint {
-        let slot_tag = match pin.slot() {
-            PinSlot::Pin1 => SLOT_TAG_PIN1,
-            PinSlot::Pin2 => SLOT_TAG_PIN2,
-        };
-        let serial_bytes = serial.as_str().as_bytes();
-        let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(&self.fingerprint_key) else {
-            // A fixed-length HMAC-SHA-256 key is always valid. Fail closed if
-            // that invariant ever breaks: every value then shares one mark and
-            // is refused after the first rejection, never replayed to the card.
-            return RejectedPinFingerprint([0_u8; FINGERPRINT_LEN]);
-        };
-        let Ok(serial_len) = u32::try_from(serial_bytes.len()) else {
-            return RejectedPinFingerprint([0_u8; FINGERPRINT_LEN]);
-        };
-        let Ok(pin_len) = u8::try_from(pin.digit_count()) else {
-            return RejectedPinFingerprint([0_u8; FINGERPRINT_LEN]);
-        };
-        mac.update(&serial_len.to_be_bytes());
-        mac.update(serial_bytes);
-        mac.update(&[slot_tag]);
-        mac.update(&[pin_len]);
-        pin.with_digits(|digits| mac.update(digits));
-        RejectedPinFingerprint(mac.finalize().into_bytes().into())
+        RejectedPinFingerprint(
+            pin.keyed_fingerprint(serial.as_str().as_bytes(), &self.fingerprint_key),
+        )
     }
 
     fn rejected(&self, slot: PinSlot) -> &[RejectedPinFingerprint] {
@@ -176,7 +142,7 @@ impl core::fmt::Debug for PinSafetyCache {
 #[cfg(test)]
 impl PinSafetyCache {
     /// Install a fixed fingerprint key so tests observe deterministic marks.
-    fn with_fixed_fingerprint_key(fingerprint_key: [u8; FINGERPRINT_KEY_LEN]) -> Self {
+    fn with_fixed_fingerprint_key(fingerprint_key: [u8; CACHE_FINGERPRINT_KEY_LEN]) -> Self {
         Self {
             fingerprint_key,
             rejected_pin1: Vec::new(),
@@ -195,7 +161,7 @@ mod tests {
     use refineid_auth::{Pin1, Pin2, PinSlot, UnvalidatedSecret};
     use refineid_pkcs15::TokenSerial;
 
-    use super::{FINGERPRINT_KEY_LEN, PinSafetyCache};
+    use super::{CACHE_FINGERPRINT_KEY_LEN, PinSafetyCache};
 
     /// Arbitrary fixed fingerprint-key byte, repeated across the key so that
     /// test fingerprints are reproducible without touching the OS random source.
@@ -210,7 +176,9 @@ mod tests {
     const OTHER_PIN_VALUE: &str = "246802";
 
     fn cache() -> PinSafetyCache {
-        PinSafetyCache::with_fixed_fingerprint_key([TEST_FINGERPRINT_KEY_BYTE; FINGERPRINT_KEY_LEN])
+        PinSafetyCache::with_fixed_fingerprint_key(
+            [TEST_FINGERPRINT_KEY_BYTE; CACHE_FINGERPRINT_KEY_LEN],
+        )
     }
 
     fn serial(text: &str) -> TokenSerial {

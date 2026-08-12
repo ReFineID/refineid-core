@@ -27,7 +27,8 @@ pub mod retry_risk;
 pub mod verify;
 
 pub use credentials::{
-    CachedPin, CredentialInputError, CredentialRole, Pin1, Pin2, Puk, UnvalidatedSecret,
+    CACHE_FINGERPRINT_KEY_LEN, CACHE_FINGERPRINT_LEN, CachedPin, CredentialInputError,
+    CredentialRole, Pin1, Pin2, Puk, UnvalidatedSecret,
 };
 pub use manage::{ManageOutcome, PinManageOps, classify_manage_sw};
 pub use retry_risk::{

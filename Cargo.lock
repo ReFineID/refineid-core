@@ -300,8 +300,10 @@ version = "26.8.12"
 name = "refineid-auth"
 version = "26.8.12"
 dependencies = [
+ "hmac",
  "refineid-apdu",
  "serde",
+ "sha2",
  "trybuild",
  "zeroize",
 ]
@@ -340,10 +342,8 @@ name = "refineid-pin-cache"
 version = "26.8.12"
 dependencies = [
  "getrandom",
- "hmac",
  "refineid-auth",
  "refineid-pkcs15",
- "sha2",
  "subtle",
  "zeroize",
 ]
