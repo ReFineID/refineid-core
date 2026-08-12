@@ -69,6 +69,12 @@ const SPKI_INDEX_WITH_VERSION: usize = 6;
 /// The same index when the optional version field is absent.
 const SPKI_INDEX_NO_VERSION: usize = 5;
 
+/// A SubjectPublicKeyInfo is exactly two fields (RFC 5280): the algorithm
+/// identifier and the subjectPublicKey bit string.
+const SPKI_FIELDS: usize = 2;
+/// A PKCS#1 RSAPublicKey is exactly two INTEGERs: modulus and exponent.
+const RSA_PUBLIC_KEY_FIELDS: usize = 2;
+
 /// The high bit of a DER INTEGER's leading byte: set, it would read as a
 /// sign, so the canonical encoding pads a positive integer with one zero
 /// byte (X.690 section 8.3).
@@ -163,11 +169,7 @@ impl RsaModulus {
     }
 
     fn reconstruct(integer_value: &[u8]) -> Result<Self, X509Error> {
-        let magnitude = integer_magnitude(integer_value);
-        match magnitude.first() {
-            None | Some(0) => Err(X509Error::InvalidKey("zero or non-minimal RSA modulus")),
-            Some(_) => Ok(Self(magnitude.to_vec())),
-        }
+        Ok(Self(positive_integer_magnitude(integer_value)?.to_vec()))
     }
 }
 
@@ -186,16 +188,11 @@ impl RsaPublicExponent {
     }
 
     fn reconstruct(integer_value: &[u8]) -> Result<Self, X509Error> {
-        let magnitude = integer_magnitude(integer_value);
-        match (magnitude.first(), magnitude.last()) {
-            (None | Some(0), _) => Err(X509Error::InvalidKey(
-                "zero or non-minimal RSA public exponent",
-            )),
-            (_, Some(&last)) if last & 1 == 0 => {
-                Err(X509Error::InvalidKey("even RSA public exponent"))
-            }
-            _ => Ok(Self(magnitude.to_vec())),
+        let magnitude = positive_integer_magnitude(integer_value)?;
+        if magnitude.last().is_some_and(|&last| last & 1 == 0) {
+            return Err(X509Error::InvalidKey("even RSA public exponent"));
         }
+        Ok(Self(magnitude.to_vec()))
     }
 }
 
@@ -223,6 +220,7 @@ impl RsaPublicKey {
     /// publicExponent INTEGER }` a subjectPublicKey BIT STRING carries.
     fn reconstruct(rsa_public_key_der: &[u8]) -> Result<Self, X509Error> {
         let rsa_public_key = sequence(rsa_public_key_der)?;
+        expect_children(rsa_public_key.value(), RSA_PUBLIC_KEY_FIELDS)?;
         let modulus = child(rsa_public_key.value(), 0)?;
         expect_tag(modulus, TAG_INTEGER)?;
         let exponent = child(rsa_public_key.value(), 1)?;
@@ -384,6 +382,7 @@ impl PublicKey {
         };
         let spki = child(tbs.value(), spki_index)?;
         expect_tag(spki, TAG_SEQUENCE)?;
+        expect_children(spki.value(), SPKI_FIELDS)?;
 
         let algorithm = child(spki.value(), 0)?;
         expect_tag(algorithm, TAG_SEQUENCE)?;
@@ -419,13 +418,29 @@ impl PublicKey {
     }
 }
 
-/// The big-endian magnitude of a DER INTEGER value. A DER INTEGER carries a
-/// leading zero byte when the high bit would otherwise read as a sign;
-/// strip it to leave the magnitude.
-fn integer_magnitude(integer_value: &[u8]) -> &[u8] {
-    match integer_value.split_first() {
-        Some((&0, rest)) if !rest.is_empty() => rest,
-        _ => integer_value,
+/// The big-endian magnitude of a DER INTEGER that must be a positive,
+/// canonically encoded value -- as every RSA key component is.
+///
+/// X.690 section 8.3 admits a leading zero byte only as a sign pad before a
+/// byte whose high bit is set; a redundant pad is non-minimal, and a high
+/// bit without the pad is a negative two's-complement value, not an RSA
+/// key component. Any of those is rejected rather than reinterpreted, so
+/// the returned magnitude is minimal and its leading byte is non-zero.
+fn positive_integer_magnitude(integer_value: &[u8]) -> Result<&[u8], X509Error> {
+    match integer_value {
+        [] => Err(X509Error::InvalidKey("empty RSA integer")),
+        [0, rest @ ..]
+            if rest
+                .first()
+                .is_some_and(|&byte| byte & INTEGER_HIGH_BIT != 0) =>
+        {
+            Ok(rest)
+        }
+        [0, ..] => Err(X509Error::InvalidKey("non-minimal RSA integer")),
+        [first, ..] if first & INTEGER_HIGH_BIT != 0 => {
+            Err(X509Error::InvalidKey("negative RSA integer"))
+        }
+        _ => Ok(integer_value),
     }
 }
 
@@ -450,11 +465,43 @@ fn encode(tag: u16, value: &[u8]) -> Result<Vec<u8>, X509Error> {
         .map_err(|_too_large| X509Error::Malformed("value exceeds the encoder length"))
 }
 
-/// Parse `bytes` as a TLV and require it be a SEQUENCE.
-fn sequence(bytes: &[u8]) -> Result<BerTlvAny<'_>, X509Error> {
+/// Parse `bytes` as exactly one definite-length TLV that consumes all of
+/// `bytes`, so a value followed by trailing bytes is rejected rather than
+/// silently truncated to its first element.
+fn single_tlv(bytes: &[u8]) -> Result<BerTlvAny<'_>, X509Error> {
     let tlv = BerTlvAny::parse(bytes).map_err(X509Error::Ber)?;
+    if tlv.size() != bytes.len() {
+        return Err(X509Error::Malformed("trailing bytes after value"));
+    }
+    Ok(tlv)
+}
+
+/// Parse `bytes` as a single SEQUENCE that consumes all of `bytes`.
+fn sequence(bytes: &[u8]) -> Result<BerTlvAny<'_>, X509Error> {
+    let tlv = single_tlv(bytes)?;
     expect_tag(tlv, TAG_SEQUENCE)?;
     Ok(tlv)
+}
+
+/// Require a constructed value to hold exactly `count` children and nothing
+/// else -- no missing child, no extra child, no trailing bytes. A
+/// fixed-arity structure (a SubjectPublicKeyInfo, an RSAPublicKey) is that
+/// many fields and no more.
+fn expect_children(value: &[u8], count: usize) -> Result<(), X509Error> {
+    let mut cursor = 0;
+    for _ in 0..count {
+        let rest = value.get(cursor..).ok_or(X509Error::Malformed(
+            "fewer children than the structure requires",
+        ))?;
+        let field = BerTlvAny::parse(rest).map_err(X509Error::Ber)?;
+        cursor = cursor
+            .checked_add(field.size())
+            .ok_or(X509Error::Malformed("length overflow"))?;
+    }
+    if cursor != value.len() {
+        return Err(X509Error::Malformed("extra children after the structure"));
+    }
+    Ok(())
 }
 
 /// The full byte span of the first child of a constructed value.
@@ -570,6 +617,9 @@ mod tests {
     const SERIAL: &[u8] = &[0x2A];
     /// The TBS version value for a v3 certificate.
     const VERSION_V3: &[u8] = &[0x02];
+    /// A byte appended past a well-formed certificate, to exercise the
+    /// trailing-bytes rejection.
+    const TRAILING_BYTE: u8 = 0xFF;
 
     fn der(tag: u16, value: &[u8]) -> Vec<u8> {
         tlv(u8::try_from(tag).expect("test tag fits a byte"), value).expect("value fits")
@@ -757,6 +807,57 @@ mod tests {
         assert_eq!(
             parse(certificate(&spki, true)),
             Err(X509Error::InvalidKey("even RSA public exponent"))
+        );
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_after_the_certificate() {
+        // A well-formed certificate with one spurious byte appended: the
+        // outer SEQUENCE no longer spans the whole input.
+        let mut certificate = certificate(&rsa_spki(), true);
+        certificate.push(TRAILING_BYTE);
+        assert_eq!(
+            parse(certificate),
+            Err(X509Error::Malformed("trailing bytes after value"))
+        );
+    }
+
+    #[test]
+    fn rejects_extra_integers_in_the_rsa_public_key() {
+        // A modulus and exponent followed by a spurious third INTEGER.
+        let mut modulus = vec![SIGN_BYTE, MODULUS_TOP_BYTE];
+        modulus.resize(1 + RSA_3072_BYTES, FILL);
+        let rsa_public_key = seq(&[
+            &der(TAG_INTEGER, &modulus),
+            &der(TAG_INTEGER, EXPONENT_65537),
+            &der(TAG_INTEGER, SERIAL),
+        ]);
+        let mut bit_string = vec![NO_UNUSED_BITS];
+        bit_string.extend_from_slice(&rsa_public_key);
+        let spki = seq(&[&rsa_algorithm(), &der(TAG_BIT_STRING, &bit_string)]);
+        assert_eq!(
+            parse(certificate(&spki, true)),
+            Err(X509Error::Malformed("extra children after the structure"))
+        );
+    }
+
+    #[test]
+    fn rejects_a_non_canonical_rsa_modulus() {
+        // A modulus whose leading byte has the high bit set but carries no
+        // DER sign pad: a negative two's-complement integer, which a lax
+        // parser would reinterpret as a positive modulus.
+        let mut modulus = vec![MODULUS_TOP_BYTE];
+        modulus.resize(RSA_3072_BYTES, FILL);
+        let rsa_public_key = seq(&[
+            &der(TAG_INTEGER, &modulus),
+            &der(TAG_INTEGER, EXPONENT_65537),
+        ]);
+        let mut bit_string = vec![NO_UNUSED_BITS];
+        bit_string.extend_from_slice(&rsa_public_key);
+        let spki = seq(&[&rsa_algorithm(), &der(TAG_BIT_STRING, &bit_string)]);
+        assert_eq!(
+            parse(certificate(&spki, true)),
+            Err(X509Error::InvalidKey("negative RSA integer"))
         );
     }
 
