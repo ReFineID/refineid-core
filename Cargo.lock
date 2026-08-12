@@ -362,6 +362,7 @@ name = "refineid-sign"
 version = "26.8.12"
 dependencies = [
  "refineid-apdu",
+ "zeroize",
 ]
 
 [[package]]

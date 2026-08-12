@@ -48,7 +48,8 @@ use commands::{
     PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef, expected_length_le,
 };
 pub use container::{
-    Ciphertext, EcdsaP256, EcdsaP384, RsaPkcs1, RsaPkcs1Sha256, RsaPssSha256, Signature,
+    CryptogramLengthError, EcdsaP256, EcdsaP384, RecoveredPlaintext, RsaCryptogram, RsaPkcs1Sha256,
+    RsaPssSha256, Signature, SignatureLength, SignatureLengthError,
 };
 
 /// PKCS#15 key reference for the authentication key (PIN1-gated).
@@ -76,8 +77,11 @@ pub enum SignScheme {
     Organizational,
 }
 
+/// RSA-3072 modulus width in bytes. The signature and the decipher
+/// cryptogram are each exactly one modulus-wide block.
+pub const RSA_3072_MODULUS_BYTES: usize = 384;
 /// Expected RSA-3072 signature length in bytes.
-pub const RSA_3072_SIG_BYTES: usize = 384;
+pub const RSA_3072_SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
 /// Expected ECDSA P-384 raw signature length in bytes.
 pub const ECDSA_P384_SIG_BYTES: usize = 96;
 /// Expected ECDSA P-256 raw signature length in bytes.
@@ -156,6 +160,15 @@ impl<E: core::fmt::Display> core::fmt::Display for SignError<E> {
 }
 
 impl<E: core::fmt::Debug + core::fmt::Display + 'static> core::error::Error for SignError<E> {}
+
+impl<E> From<container::SignatureLengthError> for SignError<E> {
+    fn from(error: container::SignatureLengthError) -> Self {
+        Self::UnexpectedSignatureLength {
+            got: error.got,
+            expected: error.expected,
+        }
+    }
+}
 
 /// Card-side private-key operations -- signing and RSA decipher --
 /// layered as default methods on every [`CardTransport`].
@@ -274,13 +287,7 @@ pub trait SignOps: CardTransport {
             ExternalHashValue::Sha256(digest),
             expected_length_le(RSA_3072_SIG_BYTES),
         )?;
-        if bytes.len() != RSA_3072_SIG_BYTES {
-            return Err(SignError::UnexpectedSignatureLength {
-                got: bytes.len(),
-                expected: RSA_3072_SIG_BYTES,
-            });
-        }
-        Ok(Signature::new(bytes))
+        Ok(Signature::from_card_bytes(bytes)?)
     }
 
     /// Sign a SHA-256 digest with an RSA-3072 key under RSASSA-PSS,
@@ -315,13 +322,7 @@ pub trait SignOps: CardTransport {
             ExternalHashValue::Sha256(digest),
             expected_length_le(RSA_3072_SIG_BYTES),
         )?;
-        if bytes.len() != RSA_3072_SIG_BYTES {
-            return Err(SignError::UnexpectedSignatureLength {
-                got: bytes.len(),
-                expected: RSA_3072_SIG_BYTES,
-            });
-        }
-        Ok(Signature::new(bytes))
+        Ok(Signature::from_card_bytes(bytes)?)
     }
 
     /// Sign a SHA-384 digest with a P-384 key, returning the raw ECDSA
@@ -353,13 +354,7 @@ pub trait SignOps: CardTransport {
             ExternalHashValue::Sha384(digest),
             expected_length_le(ECDSA_P384_SIG_BYTES),
         )?;
-        if bytes.len() != ECDSA_P384_SIG_BYTES {
-            return Err(SignError::UnexpectedSignatureLength {
-                got: bytes.len(),
-                expected: ECDSA_P384_SIG_BYTES,
-            });
-        }
-        Ok(Signature::new(bytes))
+        Ok(Signature::from_card_bytes(bytes)?)
     }
 
     /// Decipher an RSA cryptogram with a card private key, returning the
@@ -369,7 +364,9 @@ pub trait SignOps: CardTransport {
     /// `scheme` must be the family the session resolved. `algorithm` names
     /// the padding the card expects (see [`DecipherAlgRef`]). The
     /// modulus-wide cryptogram is shipped by command chaining, so the
-    /// caller need not manage extended-length APDUs.
+    /// caller need not manage extended-length APDUs. The recovered
+    /// plaintext comes back in [`RecoveredPlaintext`], which zeroises its
+    /// storage on drop.
     ///
     /// # Errors
     ///
@@ -380,8 +377,8 @@ pub trait SignOps: CardTransport {
         scheme: SignScheme,
         key: KeyRef,
         algorithm: DecipherAlgRef,
-        ciphertext: &[u8],
-    ) -> Result<Vec<u8>, SignError<Self::Error>>
+        cryptogram: &RsaCryptogram,
+    ) -> Result<RecoveredPlaintext, SignError<Self::Error>>
     where
         Self: Sized,
     {
@@ -393,14 +390,16 @@ pub trait SignOps: CardTransport {
         .map_err(SignError::Command)?;
         self.exchange(&mse, "MSE:Set CT")?;
 
-        let chain = PsoDecipher { ciphertext }
-            .into_chain()
-            .map_err(SignError::Command)?;
+        let chain = PsoDecipher {
+            ciphertext: cryptogram.as_bytes(),
+        }
+        .into_chain()
+        .map_err(SignError::Command)?;
         let mut plaintext = Vec::new();
         for command in &chain {
             plaintext = self.exchange(command, "PSO:DECIPHER")?.body;
         }
-        Ok(plaintext)
+        Ok(RecoveredPlaintext::new(plaintext))
     }
 
     /// Transmit one signing command and demand a success response.

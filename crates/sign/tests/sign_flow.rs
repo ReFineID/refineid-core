@@ -27,8 +27,8 @@ use refineid_sign::commands::{
     PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef, expected_length_le,
 };
 use refineid_sign::{
-    ECDSA_P384_SIG_BYTES, KeyRef, ORG_QUALIFIED_KEY_REF, RSA_3072_SIG_BYTES, SignError, SignOps,
-    SignScheme,
+    ECDSA_P384_SIG_BYTES, KeyRef, ORG_QUALIFIED_KEY_REF, RSA_3072_SIG_BYTES, RsaCryptogram,
+    SignError, SignOps, SignScheme,
 };
 
 /// Digest filler byte for the fixtures.
@@ -270,15 +270,16 @@ fn rsa_decipher_sets_the_confidentiality_template_and_chains_the_cryptogram() {
     }
     let mut transport = Scripted::new(steps);
 
+    let typed = RsaCryptogram::from_bytes(cryptogram).expect("modulus-wide cryptogram");
     let result = transport
         .decipher_rsa(
             SignScheme::Citizen,
             KeyRef::Auth,
             DecipherAlgRef::RSA_PKCS1,
-            &cryptogram,
+            &typed,
         )
         .expect("scripted decipher succeeds");
-    assert_eq!(result, plaintext);
+    assert_eq!(result.as_bytes(), plaintext.as_slice());
     assert!(transport.drained());
 }
 
