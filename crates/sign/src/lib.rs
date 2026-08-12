@@ -241,13 +241,17 @@ pub trait SignOps: CardTransport {
         Ok(self.exchange(&command, "PSO:CDS")?.body)
     }
 
-    /// Sign a SHA-256 digest with an RSA key, returning the RSA-3072
+    /// Sign a SHA-256 digest with an RSA-3072 key, returning its 384-byte
     /// signature.
     ///
-    /// The key's PIN must already be verified in the card session, and
-    /// `scheme` must be the family the session resolved. On an
-    /// organizational card the qualified key is local to DF.ESIGN, so
-    /// that directory must be the selected DF.
+    /// The length is fixed to RSA-3072 because that is the only RSA size the
+    /// two key references [`KeyRef`] names carry on the cards that expose
+    /// them; a card exposing an RSA-4096 signing key here would first need
+    /// this length generalised to the key's modulus width. The key's PIN
+    /// must already be verified in the card session, and `scheme` must be
+    /// the family the session resolved. On an organizational card the
+    /// qualified key is local to DF.ESIGN, so that directory must be the
+    /// selected DF.
     ///
     /// # Errors
     ///
@@ -279,15 +283,16 @@ pub trait SignOps: CardTransport {
         Ok(Signature::new(bytes))
     }
 
-    /// Sign a SHA-256 digest with an RSA key under RSASSA-PSS, returning
-    /// the RSA-3072 signature.
+    /// Sign a SHA-256 digest with an RSA-3072 key under RSASSA-PSS,
+    /// returning its 384-byte signature.
     ///
     /// The card applies the PSS padding itself, so the chain matches the
     /// pre-hashed PKCS#1 path -- only the algorithm reference differs.
     /// PSS uses a card-generated salt, so signing the same digest twice
-    /// yields different bytes. The key's PIN must already be verified in
-    /// the card session, and `scheme` must be the family the session
-    /// resolved.
+    /// yields different bytes. As for the PKCS#1 path, the length is fixed
+    /// to RSA-3072, the only RSA size the key references expose. The key's
+    /// PIN must already be verified in the card session, and `scheme` must
+    /// be the family the session resolved.
     ///
     /// # Errors
     ///
