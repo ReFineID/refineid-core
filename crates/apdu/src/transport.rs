@@ -26,7 +26,13 @@ use crate::command::{CommandApdu, CredentialCommand};
 use crate::status_word::StatusWord;
 
 /// One card response: body plus the two status bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` is redacted to the status word and the body length, never the
+/// body bytes: a response body can carry recovered secrets -- the
+/// PSO:DECIPHER plaintext, a secure-messaging-unwrapped payload -- so a
+/// `{response:?}` in an adapter or a caller diagnostic must not spill them,
+/// the same discipline the command direction keeps.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ResponseApdu {
     /// Response data body, excluding SW1 and SW2. Empty for status-only
     /// responses.
@@ -35,6 +41,16 @@ pub struct ResponseApdu {
     pub sw1: u8,
     /// Second status byte, per ISO 7816-4 section 5.1.3.
     pub sw2: u8,
+}
+
+impl core::fmt::Debug for ResponseApdu {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ResponseApdu")
+            .field("sw1", &self.sw1)
+            .field("sw2", &self.sw2)
+            .field("body_len", &self.body.len())
+            .finish()
+    }
 }
 
 impl ResponseApdu {
@@ -300,6 +316,23 @@ mod tests {
         };
         assert!(!denied.is_ok());
         assert_eq!(denied.status_word(), StatusWord::SecurityNotSatisfied);
+    }
+
+    #[test]
+    fn response_debug_redacts_the_body() {
+        // A conspicuous body byte that would show if Debug printed the body.
+        const BODY_MARKER: u8 = 0x7F;
+        const BODY_LEN: usize = 3;
+        let [sw1, sw2] = StatusWord::Success.as_u16().to_be_bytes();
+        let response = ResponseApdu {
+            body: vec![BODY_MARKER; BODY_LEN],
+            sw1,
+            sw2,
+        };
+        let rendered = format!("{response:?}");
+        assert!(rendered.contains("body_len"));
+        // Neither the marker byte nor any body content appears.
+        assert!(!rendered.contains(&format!("{BODY_MARKER}")));
     }
 
     #[test]
