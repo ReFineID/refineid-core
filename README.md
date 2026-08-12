@@ -15,6 +15,9 @@ crates stay transport-agnostic and country-profile-neutral.
 - `crates/apdu` (`refineid-apdu`) -- typed ISO 7816-4 commands, status
   words, outgoing command chaining, and the card transport port, with
   separate replay-safe and credential command ownership paths.
+- `crates/atr` (`refineid-atr`) -- ISO 7816-3 Answer to Reset parsing as
+  a typed structure: transmission convention, offered protocols, and the
+  historical bytes.
 - `crates/auth` (`refineid-auth`) -- PIN and PUK role types, VERIFY
   PIN1/PIN2 over the credential-command path for both citizen and
   organizational cards, the counter-safe status probe that resolves the
@@ -22,8 +25,15 @@ crates stay transport-agnostic and country-profile-neutral.
   COUNTER (unblock) chains, and the retry-risk policy.
 - `crates/ber` (`refineid-ber`) -- minimal BER-TLV encoder and decoder
   with a typed tag layer.
+- `crates/digest` (`refineid-digest`) -- typed SHA-2 digest values and
+  hash-algorithm identifiers with the digest lengths as named constants;
+  no key material, no card I/O.
 - `crates/pace` (`refineid-pace`) -- Card Access Number input type, the
   PACE handshake, and secure messaging.
+- `crates/pin-cache` (`refineid-pin-cache`) -- process-lifetime negative
+  PIN cache: a card-rejected PIN is retained only as a keyed fingerprint
+  and refused locally, so software never re-offers a known-bad value and
+  burns another card retry.
 - `crates/pkcs15` (`refineid-pkcs15`) -- PKCS#15 file-system reads:
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
