@@ -17,6 +17,15 @@
 //! A CAN is printed on the card, but it is sensitive access data because it
 //! enables PACE access to the chip. Consuming construction checks the value
 //! once; downstream code receives only the opaque, zeroizing [`Can`] type.
+//!
+//! A client may remember a CAN across sessions -- an operating-system
+//! keystore under user consent is a legitimate home for this credential
+//! class (see the credential-custody policy). Persistence happens upstream
+//! of this border: the input surface that collected the digits stores its
+//! own copy at collection time, and a keystore read is another input
+//! surface whose bytes re-enter through [`UnvalidatedCan`]. A [`Can`]
+//! never exports its value; past the border it flows only toward the PACE
+//! handshake.
 
 use core::fmt;
 use zeroize::{Zeroize, ZeroizeOnDrop};

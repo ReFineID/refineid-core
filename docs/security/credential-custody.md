@@ -76,6 +76,26 @@ constant-time-comparable fingerprint bound to the full card identifier and PIN
 role. It must not retain the PIN or a reversible value. This negative memory is
 not persisted.
 
+## Card Access Number custody
+
+The CAN is a different credential class from the PINs: printed on the card
+face, it authenticates the terminal's visual access to the card, not the
+user, and a wrong value costs a failed PACE handshake, not a retry counter.
+Its threat model is the contactless attacker in radio range without sight
+of the card -- for whom a software leak (a log line, a trace, a crash
+report) is the only route to the value. Custody therefore still applies in
+full: `Can` is non-clonable, zeroizing, redacted, and exports no raw value.
+
+Remembering a CAN across sessions in an operating-system keystore, under
+user consent, is a legitimate product choice for this class. Persistence
+happens upstream of the border, never through it: the input surface that
+collected the digits stores its own copy at collection time, and a keystore
+read is another input surface -- its bytes re-enter through
+`UnvalidatedCan` and `Can::reconstruct`, which rejects a corrupted or
+foreign value. The sealed type never grows an export path to serve
+storage; a client that needs the digits at some point keeps them upstream
+of that point.
+
 ## Representation and transport
 
 - Secret fields are private and zeroize on drop.
