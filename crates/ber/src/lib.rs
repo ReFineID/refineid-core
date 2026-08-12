@@ -43,25 +43,51 @@ const LONG_FORM_4B: u8 = 0x84;
 /// Largest length encodable in the three-byte long form.
 const U24_MAX: usize = (1 << 24) - 1;
 
-/// Encoder-side error: the value length does not fit the supported
-/// length forms.
+/// The five low bits of a tag's leading byte carry the tag number; when they
+/// are all set the byte is a multi-byte-tag leader whose number continues in
+/// the following octets (X.690 section 8.1.2), so no one-byte tag may take
+/// that form.
+const MULTI_BYTE_TAG_MASK: u8 = 0x1F;
+/// The high bit of a multi-byte tag's continuation octet: set means another
+/// octet follows. This crate supports a single continuation octet, so a
+/// two-byte tag's low octet must leave it clear.
+const TAG_MORE_OCTETS: u8 = 0x80;
+
+/// Encoder-side error: a value or tag that cannot be encoded into a
+/// well-formed BER-TLV record the decoder reads back unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BerLengthTooLarge {
-    /// The rejected length in bytes.
-    pub got: usize,
+pub enum BerEncodeError {
+    /// The value length exceeds the four-byte long form.
+    LengthTooLarge {
+        /// The rejected length in bytes.
+        got: usize,
+    },
+    /// The tag is not a well-formed BER identifier. A one-byte tag's number
+    /// bits must not all be set -- that marks a multi-byte tag -- and a
+    /// two-byte tag must lead with those bits set and carry a single
+    /// continuation octet whose high bit is clear (X.690 section 8.1.2).
+    /// Encoding any other tag would emit wire the decoder reframes.
+    MalformedTag {
+        /// The rejected tag.
+        tag: u16,
+    },
 }
 
-impl fmt::Display for BerLengthTooLarge {
+impl fmt::Display for BerEncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "BER length of {} bytes exceeds the four-byte long form",
-            self.got
-        )
+        match self {
+            Self::LengthTooLarge { got } => write!(
+                f,
+                "BER length of {got} bytes exceeds the four-byte long form"
+            ),
+            Self::MalformedTag { tag } => {
+                write!(f, "BER tag {tag:#06X} is not a well-formed identifier")
+            }
+        }
     }
 }
 
-impl core::error::Error for BerLengthTooLarge {}
+impl core::error::Error for BerEncodeError {}
 
 /// Owned BER-TLV building buffer.
 ///
@@ -93,9 +119,16 @@ impl BerEncoder {
     ///
     /// # Errors
     ///
-    /// [`BerLengthTooLarge`] when the value exceeds the four-byte long
-    /// form.
-    pub fn push_tlv(&mut self, tag: u8, value: impl AsRef<[u8]>) -> Result<(), BerLengthTooLarge> {
+    /// [`BerEncodeError::MalformedTag`] when `tag`'s number bits are all set
+    /// (a multi-byte-tag leader, not a complete one-byte tag), or
+    /// [`BerEncodeError::LengthTooLarge`] when the value exceeds the
+    /// four-byte long form.
+    pub fn push_tlv(&mut self, tag: u8, value: impl AsRef<[u8]>) -> Result<(), BerEncodeError> {
+        if tag & MULTI_BYTE_TAG_MASK == MULTI_BYTE_TAG_MASK {
+            return Err(BerEncodeError::MalformedTag {
+                tag: u16::from(tag),
+            });
+        }
         let value_bytes = value.as_ref();
         self.out.push(tag);
         self.push_length(value_bytes.len())?;
@@ -108,15 +141,21 @@ impl BerEncoder {
     ///
     /// # Errors
     ///
-    /// [`BerLengthTooLarge`] when the value exceeds the four-byte long
-    /// form.
+    /// [`BerEncodeError::MalformedTag`] when `tag2` is not a well-formed
+    /// two-byte tag -- its high octet must be a multi-byte-tag leader and its
+    /// low octet a single continuation with the high bit clear -- or
+    /// [`BerEncodeError::LengthTooLarge`] when the value exceeds the
+    /// four-byte long form.
     pub fn push_tlv_tag2(
         &mut self,
         tag2: u16,
         value: impl AsRef<[u8]>,
-    ) -> Result<(), BerLengthTooLarge> {
-        let value_bytes = value.as_ref();
+    ) -> Result<(), BerEncodeError> {
         let [tag_hi, tag_lo] = tag2.to_be_bytes();
+        if tag_hi & MULTI_BYTE_TAG_MASK != MULTI_BYTE_TAG_MASK || tag_lo & TAG_MORE_OCTETS != 0 {
+            return Err(BerEncodeError::MalformedTag { tag: tag2 });
+        }
+        let value_bytes = value.as_ref();
         self.out.push(tag_hi);
         self.out.push(tag_lo);
         self.push_length(value_bytes.len())?;
@@ -125,8 +164,8 @@ impl BerEncoder {
     }
 
     /// Append length octets in the short form or the matching long form.
-    fn push_length(&mut self, len: usize) -> Result<(), BerLengthTooLarge> {
-        let error = BerLengthTooLarge { got: len };
+    fn push_length(&mut self, len: usize) -> Result<(), BerEncodeError> {
+        let error = BerEncodeError::LengthTooLarge { got: len };
         if len < SHORT_FORM_CEILING {
             let byte = u8::try_from(len).map_err(|_| error)?;
             self.out.push(byte);
@@ -160,8 +199,9 @@ impl BerEncoder {
 ///
 /// # Errors
 ///
-/// [`BerLengthTooLarge`] when the value exceeds the four-byte long form.
-pub fn tlv(tag: u8, value: impl AsRef<[u8]>) -> Result<Vec<u8>, BerLengthTooLarge> {
+/// [`BerEncodeError`] on a malformed tag or a value beyond the four-byte
+/// long form.
+pub fn tlv(tag: u8, value: impl AsRef<[u8]>) -> Result<Vec<u8>, BerEncodeError> {
     let value_bytes = value.as_ref();
     let mut enc = BerEncoder::with_capacity(value_bytes.len().saturating_add(TLV_OVERHEAD_HINT));
     enc.push_tlv(tag, value_bytes)?;
@@ -172,8 +212,9 @@ pub fn tlv(tag: u8, value: impl AsRef<[u8]>) -> Result<Vec<u8>, BerLengthTooLarg
 ///
 /// # Errors
 ///
-/// [`BerLengthTooLarge`] when the value exceeds the four-byte long form.
-pub fn tlv2(tag2: u16, value: impl AsRef<[u8]>) -> Result<Vec<u8>, BerLengthTooLarge> {
+/// [`BerEncodeError`] on a malformed tag or a value beyond the four-byte
+/// long form.
+pub fn tlv2(tag2: u16, value: impl AsRef<[u8]>) -> Result<Vec<u8>, BerEncodeError> {
     let value_bytes = value.as_ref();
     let mut enc = BerEncoder::with_capacity(value_bytes.len().saturating_add(TLV_OVERHEAD_HINT));
     enc.push_tlv_tag2(tag2, value_bytes)?;
@@ -332,14 +373,6 @@ impl<'a> BerTlvAny<'a> {
     /// [`BerError::UnsupportedLengthForm`] for length forms above the
     /// four-byte long form.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, BerError> {
-        /// Low five bits all set in the first tag byte mean the tag
-        /// continues in the next byte.
-        const MULTI_BYTE_TAG_MASK: u8 = 0x1F;
-        /// Bit 8 set in a subsequent tag octet means another octet follows
-        /// (X.690 section 8.1.2.4.2 c); this crate frames only one- and
-        /// two-octet tags, so a set bit is out of scope.
-        const TAG_MORE_OCTETS: u8 = 0x80;
-
         let mut idx: usize = 0;
         let mut next = |label_first_byte: bool| -> Result<u8, BerError> {
             let byte = bytes
@@ -527,9 +560,18 @@ impl BerTag for Set {
 #[cfg(test)]
 mod tests {
     use super::{
-        BerEncoder, BerError, BerTag, BerTlv, BerTlvAny, BerTlvIter, Integer, OctetString,
-        Sequence, tlv, tlv2,
+        BerEncodeError, BerEncoder, BerError, BerTag, BerTlv, BerTlvAny, BerTlvIter, Integer,
+        OctetString, Sequence, tlv, tlv2,
     };
+
+    /// A one-byte tag whose number bits are all set: a multi-byte-tag leader
+    /// the decoder would reframe, swallowing the length octet.
+    const MULTI_BYTE_LEADER_TAG: u8 = 0x9F;
+    /// A two-byte tag whose high octet is not a multi-byte-tag leader.
+    const NON_LEADER_TWO_BYTE_TAG: u16 = 0x0206;
+    /// A two-byte tag whose low octet sets the continuation bit, implying a
+    /// third octet this crate does not frame.
+    const THREE_OCTET_LEADER_TAG: u16 = 0x7F81;
 
     /// Context-class tag used across the encode round-trip tests.
     const TAG_CONTEXT_0: u8 = 0x80;
@@ -571,6 +613,36 @@ mod tests {
     const NONCE_LEN: usize = 16;
     /// Two-byte value length for promotion tests.
     const PAIR_VALUE_LEN: usize = 2;
+
+    #[test]
+    fn rejects_a_one_byte_tag_that_is_a_multi_byte_leader() {
+        // The number bits are all set, so the byte is a multi-byte-tag
+        // leader rather than a complete one-byte tag.
+        assert_eq!(
+            tlv(MULTI_BYTE_LEADER_TAG, [FILLER]),
+            Err(BerEncodeError::MalformedTag {
+                tag: u16::from(MULTI_BYTE_LEADER_TAG),
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_a_malformed_two_byte_tag() {
+        // High octet is not a multi-byte-tag leader.
+        assert_eq!(
+            tlv2(NON_LEADER_TWO_BYTE_TAG, [FILLER]),
+            Err(BerEncodeError::MalformedTag {
+                tag: NON_LEADER_TWO_BYTE_TAG,
+            })
+        );
+        // Low octet declares a further continuation octet.
+        assert_eq!(
+            tlv2(THREE_OCTET_LEADER_TAG, [FILLER]),
+            Err(BerEncodeError::MalformedTag {
+                tag: THREE_OCTET_LEADER_TAG,
+            })
+        );
+    }
 
     fn encoded(tag: u8, value: &[u8]) -> Vec<u8> {
         tlv(tag, value).expect("fixture length is encodable")

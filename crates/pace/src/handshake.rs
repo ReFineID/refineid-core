@@ -33,7 +33,7 @@ use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
 
 use refineid_apdu::{CardTransport, CommandDataError, ResponseApdu, StatusWord, TransportOutcome};
-use refineid_ber::{BerError, BerLengthTooLarge, BerTag, BerTlv};
+use refineid_ber::{BerEncodeError, BerError, BerTag, BerTlv};
 
 use crate::can::Can;
 use crate::commands::{GeneralAuthenticate, MseSetAt};
@@ -240,8 +240,8 @@ impl<E> From<BerError> for PaceError<E> {
     }
 }
 
-impl<E> From<BerLengthTooLarge> for PaceError<E> {
-    fn from(_error: BerLengthTooLarge) -> Self {
+impl<E> From<BerEncodeError> for PaceError<E> {
+    fn from(_error: BerEncodeError) -> Self {
         Self::Encoding
     }
 }
