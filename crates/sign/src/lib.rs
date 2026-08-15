@@ -27,7 +27,7 @@
 //! transport path.
 //!
 //! The pre-hashed signing chains all fit the short-form command:
-//! RSASSA-PKCS1-v1_5 over SHA-256 or SHA-384 and RSASSA-PSS over SHA-256
+//! RSASSA-PKCS1-v1_5 and RSASSA-PSS over SHA-256, SHA-384, or SHA-512
 //! for the RSA keys, and ECDSA over P-384 with SHA-256 or SHA-384 for the
 //! newer keys. PSS is a
 //! card-native scheme -- the card applies the padding from the digest, so
@@ -46,11 +46,12 @@ use refineid_apdu::{CardTransport, CommandDataError, ResponseApdu, StatusWord, T
 
 use commands::{
     DecipherAlgRef, ExternalHashValue, MseSet, MseSetCt, PsoComputeDigitalSignature, PsoDecipher,
-    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef, expected_length_le,
+    PsoHashExternal, SHA256_LEN, SHA384_LEN, SHA512_LEN, SignatureAlgRef, expected_length_le,
 };
 pub use container::{
     CryptogramLengthError, EcdsaP256, EcdsaP384, RecoveredPlaintext, RsaCryptogram, RsaPkcs1Sha256,
-    RsaPkcs1Sha384, RsaPssSha256, Signature, SignatureLength, SignatureLengthError,
+    RsaPkcs1Sha384, RsaPkcs1Sha512, RsaPssSha256, RsaPssSha384, RsaPssSha512, Signature,
+    SignatureLength, SignatureLengthError,
 };
 
 /// PKCS#15 key reference for the authentication key (PIN1-gated).
@@ -324,6 +325,38 @@ pub trait SignOps: CardTransport {
         Ok(Signature::from_card_bytes(bytes)?)
     }
 
+    /// Sign a SHA-512 digest with an RSA-3072 key under
+    /// RSASSA-PKCS1-v1_5, returning its 384-byte signature.
+    ///
+    /// The key's PIN must already be verified in the card session, and
+    /// `scheme` must be the family the session resolved. On an
+    /// organizational card the qualified key is local to DF.ESIGN, so
+    /// that directory must be the selected DF.
+    ///
+    /// # Errors
+    ///
+    /// Any stage failure, or a signature length other than
+    /// [`RSA_3072_SIG_BYTES`].
+    fn sign_prehashed_sha512_rsa(
+        &mut self,
+        scheme: SignScheme,
+        key: KeyRef,
+        digest: [u8; SHA512_LEN],
+    ) -> Result<Signature<RsaPkcs1Sha512>, SignError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let bytes = drive_chain(
+            self,
+            scheme,
+            SignatureAlgRef::SHA512_RSA_PKCS1,
+            key,
+            ExternalHashValue::Sha512(digest),
+            expected_length_le(RSA_3072_SIG_BYTES),
+        )?;
+        Ok(Signature::from_card_bytes(bytes)?)
+    }
+
     /// Sign a SHA-256 digest with an RSA-3072 key under RSASSA-PSS,
     /// returning its 384-byte signature.
     ///
@@ -354,6 +387,68 @@ pub trait SignOps: CardTransport {
             SignatureAlgRef::SHA256_RSA_PSS,
             key,
             ExternalHashValue::Sha256(digest),
+            expected_length_le(RSA_3072_SIG_BYTES),
+        )?;
+        Ok(Signature::from_card_bytes(bytes)?)
+    }
+
+    /// Sign a SHA-384 digest with an RSA-3072 key under RSASSA-PSS,
+    /// returning its 384-byte signature.
+    ///
+    /// The card applies PSS with SHA-384, MGF1-SHA-384, and a 48-byte
+    /// salt. The key's PIN must already be verified in the card session,
+    /// and `scheme` must be the family the session resolved.
+    ///
+    /// # Errors
+    ///
+    /// Any stage failure, or a signature length other than
+    /// [`RSA_3072_SIG_BYTES`].
+    fn sign_prehashed_sha384_rsa_pss(
+        &mut self,
+        scheme: SignScheme,
+        key: KeyRef,
+        digest: [u8; SHA384_LEN],
+    ) -> Result<Signature<RsaPssSha384>, SignError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let bytes = drive_chain(
+            self,
+            scheme,
+            SignatureAlgRef::SHA384_RSA_PSS,
+            key,
+            ExternalHashValue::Sha384(digest),
+            expected_length_le(RSA_3072_SIG_BYTES),
+        )?;
+        Ok(Signature::from_card_bytes(bytes)?)
+    }
+
+    /// Sign a SHA-512 digest with an RSA-3072 key under RSASSA-PSS,
+    /// returning its 384-byte signature.
+    ///
+    /// The card applies PSS with SHA-512, MGF1-SHA-512, and a 64-byte
+    /// salt. The key's PIN must already be verified in the card session,
+    /// and `scheme` must be the family the session resolved.
+    ///
+    /// # Errors
+    ///
+    /// Any stage failure, or a signature length other than
+    /// [`RSA_3072_SIG_BYTES`].
+    fn sign_prehashed_sha512_rsa_pss(
+        &mut self,
+        scheme: SignScheme,
+        key: KeyRef,
+        digest: [u8; SHA512_LEN],
+    ) -> Result<Signature<RsaPssSha512>, SignError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let bytes = drive_chain(
+            self,
+            scheme,
+            SignatureAlgRef::SHA512_RSA_PSS,
+            key,
+            ExternalHashValue::Sha512(digest),
             expected_length_le(RSA_3072_SIG_BYTES),
         )?;
         Ok(Signature::from_card_bytes(bytes)?)

@@ -104,8 +104,11 @@ impl SignatureAlgRef {
     /// the RSA FINEID signing key's reference.
     pub const SHA256_RSA_PKCS1: Self = Self { byte: 0x42 };
     /// SHA-384 (high nibble 5) with RSASSA-PKCS1-v1_5 (low nibble 2):
-    /// the RSA qualified-document signature reference.
+    /// the RSA signature reference over SHA-384.
     pub const SHA384_RSA_PKCS1: Self = Self { byte: 0x52 };
+    /// SHA-512 (high nibble 6) with RSASSA-PKCS1-v1_5 (low nibble 2):
+    /// the RSA signature reference over SHA-512.
+    pub const SHA512_RSA_PKCS1: Self = Self { byte: 0x62 };
     /// SHA-384 (high nibble 5) with ECDSA (low nibble 4): the newer
     /// P-384 key's reference (FINEID S4-1 v4.2 section 4.2).
     pub const SHA384_ECDSA: Self = Self { byte: 0x54 };
@@ -117,6 +120,14 @@ impl SignatureAlgRef {
     /// themselves, so the choreography matches the pre-hashed RSA chain
     /// (FINEID S1 v4.2 section 3.6.3 Table 6).
     pub const SHA256_RSA_PSS: Self = Self { byte: 0x45 };
+    /// SHA-384 (high nibble 5) with RSASSA-PSS (low nibble 5), using
+    /// SHA-384 for MGF1 and a 48-byte salt as published in CIAInfo
+    /// (FINEID S4-1 v4.2 section 8.1.3).
+    pub const SHA384_RSA_PSS: Self = Self { byte: 0x55 };
+    /// SHA-512 (high nibble 6) with RSASSA-PSS (low nibble 5), using
+    /// SHA-512 for MGF1 and a 64-byte salt as published in CIAInfo
+    /// (FINEID S4-1 v4.2 section 8.1.3).
+    pub const SHA512_RSA_PSS: Self = Self { byte: 0x65 };
 
     /// The wire byte.
     #[must_use]
@@ -405,7 +416,7 @@ mod tests {
         ExternalHashValue, HASH_VALUE_HEADER_LEN, MSE_INS, MSE_P1_SET, MSE_P2_CT, MSE_P2_DST,
         MseSet, MseSetCt, PSO_CDS_LE_ANY, PSO_CDS_P1, PSO_CDS_P2, PSO_DECIPHER_P1, PSO_DECIPHER_P2,
         PSO_HASH_P1, PSO_HASH_P2_EXTERNAL, PSO_HASH_TAG_VALUE, PSO_INS, PsoComputeDigitalSignature,
-        PsoDecipher, PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef,
+        PsoDecipher, PsoHashExternal, SHA256_LEN, SHA384_LEN, SHA512_LEN, SignatureAlgRef,
     };
     use crate::{KEY_REF_AUTH, KEY_REF_SIGN, ORG_QUALIFIED_KEY_REF};
     use refineid_apdu::ApduClass;
@@ -416,12 +427,18 @@ mod tests {
     const ALG_SHA256_RSA: u8 = 0x42;
     /// The documented SHA-384 + RSA-PKCS1 algorithm-reference byte.
     const ALG_SHA384_RSA: u8 = 0x52;
+    /// The documented SHA-512 + RSA-PKCS1 algorithm-reference byte.
+    const ALG_SHA512_RSA: u8 = 0x62;
     /// The documented SHA-384 + ECDSA algorithm-reference byte.
     const ALG_SHA384_ECDSA: u8 = 0x54;
     /// The documented SHA-256 + ECDSA algorithm-reference byte.
     const ALG_SHA256_ECDSA: u8 = 0x44;
     /// The documented SHA-256 + RSASSA-PSS algorithm-reference byte.
     const ALG_SHA256_RSA_PSS: u8 = 0x45;
+    /// The documented SHA-384 + RSASSA-PSS algorithm-reference byte.
+    const ALG_SHA384_RSA_PSS: u8 = 0x55;
+    /// The documented SHA-512 + RSASSA-PSS algorithm-reference byte.
+    const ALG_SHA512_RSA_PSS: u8 = 0x65;
     /// The documented RSA PKCS#1 v1.5 decipher algorithm-reference byte.
     const ALG_DECIPHER_PKCS1: u8 = 0x1A;
     /// RSA-3072 modulus width in bytes: one cryptogram block.
@@ -496,11 +513,20 @@ mod tests {
     fn algorithm_references_pack_the_documented_bytes() {
         assert_eq!(SignatureAlgRef::SHA256_RSA_PKCS1.as_byte(), ALG_SHA256_RSA);
         assert_eq!(SignatureAlgRef::SHA384_RSA_PKCS1.as_byte(), ALG_SHA384_RSA);
+        assert_eq!(SignatureAlgRef::SHA512_RSA_PKCS1.as_byte(), ALG_SHA512_RSA);
         assert_eq!(SignatureAlgRef::SHA384_ECDSA.as_byte(), ALG_SHA384_ECDSA);
         assert_eq!(SignatureAlgRef::SHA256_ECDSA.as_byte(), ALG_SHA256_ECDSA);
         assert_eq!(
             SignatureAlgRef::SHA256_RSA_PSS.as_byte(),
             ALG_SHA256_RSA_PSS
+        );
+        assert_eq!(
+            SignatureAlgRef::SHA384_RSA_PSS.as_byte(),
+            ALG_SHA384_RSA_PSS
+        );
+        assert_eq!(
+            SignatureAlgRef::SHA512_RSA_PSS.as_byte(),
+            ALG_SHA512_RSA_PSS
         );
     }
 
@@ -571,6 +597,10 @@ mod tests {
         assert_eq!(
             ExternalHashValue::Sha384([FILL; SHA384_LEN]).len_byte(),
             SHA384_LEN as u8
+        );
+        assert_eq!(
+            ExternalHashValue::Sha512([FILL; SHA512_LEN]).len_byte(),
+            SHA512_LEN as u8
         );
     }
 

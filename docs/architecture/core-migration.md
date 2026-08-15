@@ -282,6 +282,17 @@ It is covered by unit tests over synthetic RSA-3072, P-384, and P-256
 certificates, and is hardware-validated (see below). Constants are traced
 to RFC 5280, PKCS#1, and the object identifiers in RFC 5480 and RFC 8017.
 
+The twelfth slice extends the RSA signing vocabulary to every SHA-2 hash used
+by current browser TLS client authentication: RSASSA-PKCS1-v1_5 and
+RSASSA-PSS over SHA-256, SHA-384, and SHA-512. Each entry point takes the digest as a
+fixed-size array, selects the algorithm reference whose high nibble names that
+hash and whose low nibble names PKCS1 or PSS, and returns a distinct
+algorithm-typed RSA-3072 signature. FINEID S1 v4.2 section 3.6.3 Table 6 fixes
+the reference construction; S4-1 v4.2 section 8.1.3 publishes all six
+algorithms as compute-signature operations and fixes each PSS hash, MGF1 hash,
+and salt length. The added SHA-384 and SHA-512 chains are covered by scripted
+transport tests and are not recorded as hardware-validated.
+
 ## Hardware validation
 
 Slices two through five have been exercised against two citizen card

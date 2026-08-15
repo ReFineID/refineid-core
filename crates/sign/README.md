@@ -15,9 +15,11 @@ gates the key must already be verified in the card session; these commands
 carry no credential material and ride the plain transport path, so the
 same operations work over a PACE secure-messaging transport unchanged.
 
-`SignOps::sign_prehashed_sha256_rsa` covers the RSA keys (RSASSA-PKCS1
-over SHA-256, an RSA-3072 signature), `sign_prehashed_sha256_rsa_pss`
-covers the same keys under RSASSA-PSS, and
+`SignOps::sign_prehashed_sha256_rsa`, `sign_prehashed_sha384_rsa`, and
+`sign_prehashed_sha512_rsa` cover the RSA keys under RSASSA-PKCS1;
+the corresponding `sign_prehashed_*_rsa_pss` methods cover the same
+SHA-256, SHA-384, and SHA-512 digests under RSASSA-PSS. All return an
+RSA-3072 signature. The
 `sign_prehashed_sha256_ecdsa` plus `sign_prehashed_sha384_ecdsa` cover
 the newer P-384 keys with the SHA-256 and SHA-384 schemes TLS peers can
 negotiate (raw `r || s`). PSS is a card-native scheme: the card applies
@@ -37,11 +39,12 @@ which a T=0 card requires to answer directly; the wider RSA-3072
 signature uses the maximum-length encoding and the adapter chains the
 61xx response.
 
-The PSS, decipher, and SHA-384 ECDSA paths are hardware-validated: on the older
-card the authentication key produced a PSS signature that verified against
-its certificate and recovered a message encrypted to it, and on the newer
-card the authentication key produced a P-384 ECDSA signature that
-verified against its certificate. The PKCS#1, SHA-256 ECDSA, and
+The SHA-256 PSS, decipher, and SHA-384 ECDSA paths are hardware-validated:
+on the older card the authentication key produced a SHA-256 PSS signature
+that verified against its certificate and recovered a message encrypted to
+it, and on the newer card the authentication key produced a P-384 ECDSA
+signature that verified against its certificate. The PKCS#1,
+SHA-384/SHA-512 PSS, SHA-256 ECDSA, and
 organizational inline-digest chains rest on scripted-transport tests and,
 for the organizational chain, the behaviour reference, until each is
 observed on hardware. Constants and the command choreography are traced to the

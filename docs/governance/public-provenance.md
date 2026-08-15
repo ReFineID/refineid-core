@@ -129,6 +129,17 @@ deployment details.
   PKCS#1, and the object identifiers in RFC 5480 and RFC 8017. Secret,
   personal-information, protocol, and dependency scans were performed for
   this slice.
+- **Extended RSA signing.** Publication under Apache-2.0 directed on
+  2026-08-15 for the `refineid-sign` SHA-384 and SHA-512 RSA additions:
+  the PKCS1-v1_5 and PSS algorithm references, fixed-size digest entry points,
+  and algorithm-typed signature containers. The change reuses the admitted
+  pre-hashed signing choreography and is reconstructed from the public
+  specifications, not private source. FINEID S1 v4.2 section 3.6.3 Table 6
+  fixes the algorithm-reference nibbles; S4-1 v4.2 section 8.1.3 publishes
+  the matching compute-signature algorithms and PSS parameters. The new
+  paths are covered by scripted-transport tests and are not recorded as
+  hardware-validated. Secret, personal-information, protocol, and
+  dependency scans were performed for this slice.
 
 Before a later slice is admitted, its review must record:
 

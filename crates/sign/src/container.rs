@@ -34,11 +34,23 @@ pub struct RsaPkcs1Sha256;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RsaPkcs1Sha384;
 
+/// RSASSA-PKCS1-v1_5 over SHA-512.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RsaPkcs1Sha512;
+
 /// RSASSA-PSS over SHA-256. The card performs the PSS encoding and the
 /// private-key operation from the host-supplied digest; the salt is the
 /// card's, so two signatures over the same digest differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RsaPssSha256;
+
+/// RSASSA-PSS over SHA-384 with MGF1-SHA-384 and a 48-byte salt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RsaPssSha384;
+
+/// RSASSA-PSS over SHA-512 with MGF1-SHA-512 and a 64-byte salt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RsaPssSha512;
 
 /// ECDSA over NIST P-384 (secp384r1), raw `r || s`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,7 +65,10 @@ mod sealed {
 
     impl Sealed for super::RsaPkcs1Sha256 {}
     impl Sealed for super::RsaPkcs1Sha384 {}
+    impl Sealed for super::RsaPkcs1Sha512 {}
     impl Sealed for super::RsaPssSha256 {}
+    impl Sealed for super::RsaPssSha384 {}
+    impl Sealed for super::RsaPssSha512 {}
     impl Sealed for super::EcdsaP384 {}
     impl Sealed for super::EcdsaP256 {}
 }
@@ -77,7 +92,19 @@ impl SignatureLength for RsaPkcs1Sha384 {
     const SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
 }
 
+impl SignatureLength for RsaPkcs1Sha512 {
+    const SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
+}
+
 impl SignatureLength for RsaPssSha256 {
+    const SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
+}
+
+impl SignatureLength for RsaPssSha384 {
+    const SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
+}
+
+impl SignatureLength for RsaPssSha512 {
     const SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
 }
 
@@ -271,8 +298,9 @@ impl core::fmt::Debug for RecoveredPlaintext {
 #[cfg(test)]
 mod tests {
     use super::{
-        EcdsaP384, RSA_3072_MODULUS_BYTES, RecoveredPlaintext, RsaCryptogram, RsaPssSha256,
-        Signature, SignatureLength as _,
+        EcdsaP384, RSA_3072_MODULUS_BYTES, RecoveredPlaintext, RsaCryptogram, RsaPkcs1Sha256,
+        RsaPkcs1Sha384, RsaPkcs1Sha512, RsaPssSha256, RsaPssSha384, RsaPssSha512, Signature,
+        SignatureLength as _,
     };
     use crate::ECDSA_P384_SIG_BYTES;
 
@@ -305,6 +333,16 @@ mod tests {
         let error = Signature::<RsaPssSha256>::from_card_bytes(Vec::new()).expect_err("empty");
         assert_eq!(error.got, 0);
         assert_eq!(error.expected, RSA_3072_MODULUS_BYTES);
+    }
+
+    #[test]
+    fn every_rsa_signature_scheme_is_modulus_wide() {
+        assert_eq!(RsaPkcs1Sha256::SIG_BYTES, RSA_3072_MODULUS_BYTES);
+        assert_eq!(RsaPkcs1Sha384::SIG_BYTES, RSA_3072_MODULUS_BYTES);
+        assert_eq!(RsaPkcs1Sha512::SIG_BYTES, RSA_3072_MODULUS_BYTES);
+        assert_eq!(RsaPssSha256::SIG_BYTES, RSA_3072_MODULUS_BYTES);
+        assert_eq!(RsaPssSha384::SIG_BYTES, RSA_3072_MODULUS_BYTES);
+        assert_eq!(RsaPssSha512::SIG_BYTES, RSA_3072_MODULUS_BYTES);
     }
 
     #[test]

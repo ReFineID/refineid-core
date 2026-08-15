@@ -24,7 +24,7 @@ use refineid_apdu::{
 };
 use refineid_sign::commands::{
     DecipherAlgRef, ExternalHashValue, MseSet, MseSetCt, PsoComputeDigitalSignature, PsoDecipher,
-    PsoHashExternal, SHA256_LEN, SHA384_LEN, SignatureAlgRef, expected_length_le,
+    PsoHashExternal, SHA256_LEN, SHA384_LEN, SHA512_LEN, SignatureAlgRef, expected_length_le,
 };
 use refineid_sign::{
     ECDSA_P384_SIG_BYTES, KeyRef, ORG_QUALIFIED_KEY_REF, RSA_3072_SIG_BYTES, RsaCryptogram,
@@ -153,7 +153,7 @@ fn citizen_rsa_sha256_drives_the_three_command_chain() {
 }
 
 #[test]
-fn citizen_rsa_sha384_drives_the_qualified_signature_chain() {
+fn citizen_rsa_sha384_drives_the_three_command_chain() {
     let digest = [DIGEST_FILL; SHA384_LEN];
     let signature = vec![SIG_FILL; RSA_3072_SIG_BYTES];
     let mut transport = Scripted::new(vec![
@@ -161,7 +161,7 @@ fn citizen_rsa_sha384_drives_the_qualified_signature_chain() {
             mse_wire(
                 SignScheme::Citizen,
                 SignatureAlgRef::SHA384_RSA_PKCS1,
-                KeyRef::Sign,
+                KeyRef::Auth,
             ),
             success(vec![]),
         ),
@@ -173,8 +173,36 @@ fn citizen_rsa_sha384_drives_the_qualified_signature_chain() {
     ]);
 
     let result = transport
-        .sign_prehashed_sha384_rsa(SignScheme::Citizen, KeyRef::Sign, digest)
-        .expect("scripted qualified RSA sign succeeds");
+        .sign_prehashed_sha384_rsa(SignScheme::Citizen, KeyRef::Auth, digest)
+        .expect("scripted SHA-384 RSA sign succeeds");
+    assert_eq!(result.as_bytes(), signature.as_slice());
+    assert_eq!(result.len(), RSA_3072_SIG_BYTES);
+    assert!(transport.drained());
+}
+
+#[test]
+fn citizen_rsa_sha512_drives_the_three_command_chain() {
+    let digest = [DIGEST_FILL; SHA512_LEN];
+    let signature = vec![SIG_FILL; RSA_3072_SIG_BYTES];
+    let mut transport = Scripted::new(vec![
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA512_RSA_PKCS1,
+                KeyRef::Auth,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha512(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(rsa_le()), success(signature.clone())),
+    ]);
+
+    let result = transport
+        .sign_prehashed_sha512_rsa(SignScheme::Citizen, KeyRef::Auth, digest)
+        .expect("scripted SHA-512 RSA sign succeeds");
     assert_eq!(result.as_bytes(), signature.as_slice());
     assert_eq!(result.len(), RSA_3072_SIG_BYTES);
     assert!(transport.drained());
@@ -287,6 +315,62 @@ fn citizen_rsa_pss_signs_over_the_loaded_hash_under_the_pss_reference() {
     let result = transport
         .sign_prehashed_sha256_rsa_pss(SignScheme::Citizen, KeyRef::Auth, digest)
         .expect("scripted PSS sign succeeds");
+    assert_eq!(result.as_bytes(), signature.as_slice());
+    assert_eq!(result.len(), RSA_3072_SIG_BYTES);
+    assert!(transport.drained());
+}
+
+#[test]
+fn citizen_rsa_pss_sha384_uses_the_matching_hash_and_pss_reference() {
+    let digest = [DIGEST_FILL; SHA384_LEN];
+    let signature = vec![SIG_FILL; RSA_3072_SIG_BYTES];
+    let mut transport = Scripted::new(vec![
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA384_RSA_PSS,
+                KeyRef::Auth,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha384(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(rsa_le()), success(signature.clone())),
+    ]);
+
+    let result = transport
+        .sign_prehashed_sha384_rsa_pss(SignScheme::Citizen, KeyRef::Auth, digest)
+        .expect("scripted SHA-384 PSS sign succeeds");
+    assert_eq!(result.as_bytes(), signature.as_slice());
+    assert_eq!(result.len(), RSA_3072_SIG_BYTES);
+    assert!(transport.drained());
+}
+
+#[test]
+fn citizen_rsa_pss_sha512_uses_the_matching_hash_and_pss_reference() {
+    let digest = [DIGEST_FILL; SHA512_LEN];
+    let signature = vec![SIG_FILL; RSA_3072_SIG_BYTES];
+    let mut transport = Scripted::new(vec![
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA512_RSA_PSS,
+                KeyRef::Auth,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha512(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(rsa_le()), success(signature.clone())),
+    ]);
+
+    let result = transport
+        .sign_prehashed_sha512_rsa_pss(SignScheme::Citizen, KeyRef::Auth, digest)
+        .expect("scripted SHA-512 PSS sign succeeds");
     assert_eq!(result.as_bytes(), signature.as_slice());
     assert_eq!(result.len(), RSA_3072_SIG_BYTES);
     assert!(transport.drained());
