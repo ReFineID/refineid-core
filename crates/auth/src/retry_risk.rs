@@ -35,6 +35,10 @@ const RETRIES_ONE_SPENT: u8 = 4;
 const RETRIES_FLOOR: u8 = 3;
 /// Retry count below the consumer floor.
 const RETRIES_BELOW_FLOOR: u8 = 2;
+/// Retry count at which credential lockout is one wrong try away.
+const RETRIES_LOCKDOWN_IMMINENT: u8 = 1;
+/// Retry count after the credential is exhausted.
+const RETRIES_EXHAUSTED: u8 = 0;
 
 /// Severity derived from the FINEID five-attempt PIN counter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,8 +67,8 @@ impl PinRetryRisk {
             RETRIES_ONE_SPENT => Some(Self::DisturbanceDetected),
             RETRIES_FLOOR => Some(Self::SecurityIncidentDeclared),
             RETRIES_BELOW_FLOOR => Some(Self::CriticalThreatLevel),
-            1 => Some(Self::LockdownImminent),
-            0 => Some(Self::DefencesFallen),
+            RETRIES_LOCKDOWN_IMMINENT => Some(Self::LockdownImminent),
+            RETRIES_EXHAUSTED => Some(Self::DefencesFallen),
             _ => None,
         }
     }
@@ -103,7 +107,22 @@ impl PinRetryRisk {
 /// fail closed.
 #[must_use]
 pub const fn pin1_status_permits_consumer_authentication(pin1: PinStatus) -> bool {
-    match pin1 {
+    pin_status_permits_consumer_operation(pin1)
+}
+
+/// Whether a live PIN2 status permits an ordinary qualified-signature
+/// attempt.
+///
+/// This predicate grants only the safety-floor decision. The operation
+/// must still present a freshly reconstructed [`crate::Pin2`] to the
+/// card; a previously verified status is not a reusable authorization.
+#[must_use]
+pub const fn pin2_status_permits_qualified_signature(pin2: PinStatus) -> bool {
+    pin_status_permits_consumer_operation(pin2)
+}
+
+const fn pin_status_permits_consumer_operation(status: PinStatus) -> bool {
+    match status {
         PinStatus::Verified => true,
         PinStatus::Remaining(retries) => matches!(
             PinRetryRisk::from_retries(retries),
@@ -129,9 +148,10 @@ pub const fn pin1_status_permits_reusable_cache(pin1: PinStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PinRetryRisk, PinStatus, RETRIES_BELOW_FLOOR, RETRIES_FLOOR, RETRIES_ONE_SPENT,
-        RETRIES_PRISTINE, pin1_status_permits_consumer_authentication,
-        pin1_status_permits_reusable_cache,
+        PinRetryRisk, PinStatus, RETRIES_BELOW_FLOOR, RETRIES_EXHAUSTED, RETRIES_FLOOR,
+        RETRIES_LOCKDOWN_IMMINENT, RETRIES_ONE_SPENT, RETRIES_PRISTINE,
+        pin1_status_permits_consumer_authentication, pin1_status_permits_reusable_cache,
+        pin2_status_permits_qualified_signature,
     };
     use refineid_apdu::{PinRetries, StatusWord};
 
@@ -166,8 +186,11 @@ mod tests {
             risk(RETRIES_BELOW_FLOOR),
             Some(PinRetryRisk::CriticalThreatLevel)
         );
-        assert_eq!(risk(1), Some(PinRetryRisk::LockdownImminent));
-        assert_eq!(risk(0), Some(PinRetryRisk::DefencesFallen));
+        assert_eq!(
+            risk(RETRIES_LOCKDOWN_IMMINENT),
+            Some(PinRetryRisk::LockdownImminent)
+        );
+        assert_eq!(risk(RETRIES_EXHAUSTED), Some(PinRetryRisk::DefencesFallen));
         assert_eq!(risk(ABOVE_LIMIT), None);
     }
 
@@ -198,10 +221,14 @@ mod tests {
         assert!(!pin1_status_permits_consumer_authentication(remaining(
             RETRIES_BELOW_FLOOR
         )));
-        assert!(!pin1_status_permits_consumer_authentication(remaining(1)));
+        assert!(!pin1_status_permits_consumer_authentication(remaining(
+            RETRIES_LOCKDOWN_IMMINENT
+        )));
         // Zero attempts passes the floor -- nothing left to protect; the card
         // surfaces its locked state instead.
-        assert!(pin1_status_permits_consumer_authentication(remaining(0)));
+        assert!(pin1_status_permits_consumer_authentication(remaining(
+            RETRIES_EXHAUSTED
+        )));
         assert!(pin1_status_permits_consumer_authentication(
             PinStatus::Verified
         ));
@@ -214,6 +241,27 @@ mod tests {
         assert!(!pin1_status_permits_consumer_authentication(
             PinStatus::Other(StatusWord::from_u16(UNMODELED_SW))
         ));
+    }
+
+    #[test]
+    fn qualified_signature_uses_the_same_consumer_retry_floor() {
+        for status in [
+            remaining(RETRIES_PRISTINE),
+            remaining(RETRIES_ONE_SPENT),
+            remaining(RETRIES_FLOOR),
+            remaining(RETRIES_BELOW_FLOOR),
+            remaining(RETRIES_LOCKDOWN_IMMINENT),
+            remaining(RETRIES_EXHAUSTED),
+            PinStatus::Verified,
+            PinStatus::Locked,
+            PinStatus::NoInfo,
+            PinStatus::Other(StatusWord::from_u16(UNMODELED_SW)),
+        ] {
+            assert_eq!(
+                pin2_status_permits_qualified_signature(status),
+                pin1_status_permits_consumer_authentication(status),
+            );
+        }
     }
 
     #[test]

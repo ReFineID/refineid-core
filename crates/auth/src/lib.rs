@@ -33,6 +33,7 @@ pub use credentials::{
 pub use manage::{ManageOutcome, PinManageOps, classify_manage_sw};
 pub use retry_risk::{
     PinRetryRisk, pin1_status_permits_consumer_authentication, pin1_status_permits_reusable_cache,
+    pin2_status_permits_qualified_signature,
 };
 pub use verify::{
     AuthError, ORGANIZATIONAL_PIN_MAX_LENGTH, PIN_STORED_LENGTH, PIN1_REFERENCE,
