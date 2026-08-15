@@ -45,6 +45,16 @@ pub const PKCS15_AID: &[u8] = &[
 const _PKCS15_AID_LENGTH_GUARD: () =
     assert!(PKCS15_AID.len() >= Aid::MIN_LENGTH && PKCS15_AID.len() <= Aid::MAX_LENGTH);
 
+/// The DF.ESIGN application identifier, ASCII `E.SIGN`, published by
+/// FINEID S4-2 v4.0 section 4.6.21 for the organizational card's
+/// qualified-signature directory.
+pub const ESIGN_AID: &[u8] = b"E.SIGN";
+
+// Compile-time guard: keep the published directory name inside the
+// ISO 7816-5 AID length range accepted by the typed SELECT builder.
+const _ESIGN_AID_LENGTH_GUARD: () =
+    assert!(ESIGN_AID.len() >= Aid::MIN_LENGTH && ESIGN_AID.len() <= Aid::MAX_LENGTH);
+
 /// EF.4331, the authentication certificate, per FINEID S4-2 section 3.
 pub const EF_AUTH_CERT_FID: FileId = FileId::from_u16(0x4331);
 /// EF.4332, the qualified-signature certificate.
@@ -61,17 +71,18 @@ pub const EF_SIGN_CERT_ALT_FID: FileId = FileId::from_u16(0x4335);
 pub const EF_ISSUING_CA_ECC_FID: FileId = FileId::from_u16(0x4336);
 /// PKCS#15 EF.TokenInfo: card label, manufacturer, and serial.
 pub const EF_TOKEN_INFO_FID: FileId = FileId::from_u16(0x5032);
-/// The DF holding the signature and alternate certificate slots, per
-/// FINEID S4-2 section 3.
-pub const DF_CERT_DIRECTORY_FID: FileId = FileId::from_u16(0x5016);
+/// DF.ESIGN's file identifier, the citizen-card signature-directory
+/// fallback when the card does not publish the organizational
+/// [`ESIGN_AID`] name.
+pub const DF_ESIGN_FID: FileId = FileId::from_u16(0x5016);
 
 /// Where a slot lives in the card's file tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SlotPath {
     /// Direct child of the PKCS#15 application DF.
     UnderPkcs15App,
-    /// Lives under the certificate DF beneath the MF.
-    UnderCertDirectory,
+    /// Lives under the signature directory beneath the MF.
+    UnderEsignDirectory,
     /// Lives directly under the MF.
     UnderMf,
 }
@@ -126,15 +137,16 @@ impl CertSlot {
         }
     }
 
-    /// Directory location of this slot's EF, per FINEID S4-2 section 3:
+    /// Directory location of this slot's EF, per FINEID S4-1 section 8.1
+    /// and FINEID S4-2 v4.0 section 4.6:
     /// the authentication certificate sits directly under the PKCS#15
     /// application, the signature and alternate slots under the
-    /// certificate DF, and the CA copies under the MF.
+    /// signature directory, and the CA copies under the MF.
     const fn path(self) -> SlotPath {
         match self {
             Self::Authentication => SlotPath::UnderPkcs15App,
             Self::Signature | Self::AuthenticationAlt | Self::SignatureAlt => {
-                SlotPath::UnderCertDirectory
+                SlotPath::UnderEsignDirectory
             }
             Self::RootCa | Self::IssuingCaEcc => SlotPath::UnderMf,
         }
@@ -245,8 +257,8 @@ pub enum Pkcs15Error<E> {
     /// Card returned a non-success status word.
     Status(StatusWord),
     /// An AID constant fell outside the ISO 7816-5 length range; kept
-    /// as a typed path even though the compile-time guard on
-    /// [`PKCS15_AID`] makes it unreachable.
+    /// as a typed path even though the compile-time guards on
+    /// [`PKCS15_AID`] and [`ESIGN_AID`] make it unreachable.
     Aid(AidError),
     /// A typed command rejected its data field; unreachable for the
     /// two-byte file identifiers issued here, kept fail-closed.
@@ -435,6 +447,32 @@ pub trait Pkcs15Ops: CardTransport {
         select_with_variants(self, variants)
     }
 
+    /// SELECT the signature directory beneath the MF.
+    ///
+    /// Organizational cards publish the directory by the
+    /// [`ESIGN_AID`] name. Citizen cards accept the
+    /// [`DF_ESIGN_FID`] file identifier instead. The name is tried
+    /// first because an organizational card can acknowledge a
+    /// file-identifier SELECT without making DF.ESIGN current.
+    ///
+    /// # Errors
+    ///
+    /// Transport failures, or the last non-success status word when
+    /// the named and file-identifier variants are all rejected.
+    fn select_esign_directory(&mut self) -> Result<(), Pkcs15Error<Self::Error>>
+    where
+        Self: Sized,
+    {
+        self.select_mf()?;
+        let aid = Aid::from_slice(ESIGN_AID).map_err(Pkcs15Error::Aid)?;
+        let variants = [
+            SelectByAidNoFci { aid }.into_apdu(),
+            select_child_df_variant(DF_ESIGN_FID)?,
+            select_any_by_fid_variant(DF_ESIGN_FID),
+        ];
+        select_with_variants(self, variants)
+    }
+
     /// READ BINARY the currently selected EF in chunks until the end
     /// marker, a short read, or the cap.
     ///
@@ -578,9 +616,8 @@ pub trait Pkcs15Ops: CardTransport {
                 self.select_ef(slot.fid())?;
                 self.read_binary_der_object(slot.label())?
             }
-            SlotPath::UnderCertDirectory => {
-                self.select_mf()?;
-                self.select_child_df(DF_CERT_DIRECTORY_FID)?;
+            SlotPath::UnderEsignDirectory => {
+                self.select_esign_directory()?;
                 self.select_ef(slot.fid())?;
                 self.read_binary_der_object(slot.label())?
             }

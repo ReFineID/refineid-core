@@ -23,8 +23,9 @@ use refineid_apdu::{
     StatusWord, TransportOutcome,
 };
 use refineid_ber::{BerTag, Sequence, tlv};
-use refineid_pkcs15::fs::DF_CERT_DIRECTORY_FID;
-use refineid_pkcs15::{CertSlot, EF_TOKEN_INFO_FID, PKCS15_AID, Pkcs15Error, Pkcs15Ops};
+use refineid_pkcs15::{
+    CertSlot, DF_ESIGN_FID, EF_TOKEN_INFO_FID, ESIGN_AID, PKCS15_AID, Pkcs15Error, Pkcs15Ops,
+};
 
 /// Chunk size the read loops request, mirroring the implementation; a
 /// change there must fail these scripts loudly.
@@ -118,8 +119,19 @@ fn pkcs15_aid() -> Aid {
     Aid::from_slice(PKCS15_AID).expect("published AID length is valid")
 }
 
+fn esign_aid() -> Aid {
+    Aid::from_slice(ESIGN_AID).expect("published E.SIGN AID length is valid")
+}
+
 fn select_app_wire() -> Vec<u8> {
     SelectByAidNoFci { aid: pkcs15_aid() }
+        .into_apdu()
+        .as_bytes()
+        .to_vec()
+}
+
+fn select_esign_wire() -> Vec<u8> {
+    SelectByAidNoFci { aid: esign_aid() }
         .into_apdu()
         .as_bytes()
         .to_vec()
@@ -136,6 +148,21 @@ fn select_any_by_fid_wire(fid: FileId) -> Vec<u8> {
         response_mode: SelectFileResponseMode::None,
     }
     .into_apdu()
+    .as_bytes()
+    .to_vec()
+}
+
+fn select_child_df_wire(fid: FileId) -> Vec<u8> {
+    CommandApdu::case_3(
+        refineid_apdu::CommandHeader {
+            class: ApduClass::Plain,
+            instruction: SelectFile::INS,
+            p1: P1_SELECT_CHILD_DF,
+            p2: SelectFileResponseMode::None.as_p2(),
+        },
+        fid.as_bytes(),
+    )
+    .expect("file identifiers fit a data field")
     .as_bytes()
     .to_vec()
 }
@@ -195,26 +222,12 @@ fn authentication_certificate_reads_across_chunks() {
 }
 
 #[test]
-fn signature_certificate_routes_through_the_cert_directory() {
+fn signature_certificate_prefers_the_named_esign_directory() {
     let der = certificate_fixture(ONE_CHUNK_CONTENT_LEN);
 
     let mut transport = ScriptedTransport::new(vec![
         (select_any_by_fid_wire(FileId::MF), ok_response(&[])),
-        (
-            CommandApdu::case_3(
-                refineid_apdu::CommandHeader {
-                    class: ApduClass::Plain,
-                    instruction: SelectFile::INS,
-                    p1: P1_SELECT_CHILD_DF,
-                    p2: SelectFileResponseMode::None.as_p2(),
-                },
-                DF_CERT_DIRECTORY_FID.as_bytes(),
-            )
-            .expect("file identifiers fit a data field")
-            .as_bytes()
-            .to_vec(),
-            ok_response(&[]),
-        ),
+        (select_esign_wire(), ok_response(&[])),
         (select_ef_wire(CertSlot::Signature.fid()), ok_response(&[])),
         (read_wire(0, READ_CHUNK_LEN), ok_response(&der)),
     ]);
@@ -225,6 +238,45 @@ fn signature_certificate_routes_through_the_cert_directory() {
     assert_eq!(cert.as_bytes(), der.as_slice());
     assert!(CertSlot::Signature.requires_mf_traversal());
     assert!(!CertSlot::Authentication.requires_mf_traversal());
+    transport.assert_drained();
+}
+
+#[test]
+fn signature_certificate_falls_back_to_the_esign_file_identifier() {
+    let der = certificate_fixture(ONE_CHUNK_CONTENT_LEN);
+
+    let mut transport = ScriptedTransport::new(vec![
+        (select_any_by_fid_wire(FileId::MF), ok_response(&[])),
+        (select_esign_wire(), response(&[], StatusWord::FileNotFound)),
+        (select_child_df_wire(DF_ESIGN_FID), ok_response(&[])),
+        (select_ef_wire(CertSlot::Signature.fid()), ok_response(&[])),
+        (read_wire(0, READ_CHUNK_LEN), ok_response(&der)),
+    ]);
+
+    let cert = transport
+        .read_certificate(CertSlot::Signature)
+        .expect("scripted read succeeds");
+    assert_eq!(cert.as_bytes(), der.as_slice());
+    assert!(CertSlot::Signature.requires_mf_traversal());
+    assert!(!CertSlot::Authentication.requires_mf_traversal());
+    transport.assert_drained();
+}
+
+#[test]
+fn esign_file_identifier_falls_back_from_child_to_any_file() {
+    let mut transport = ScriptedTransport::new(vec![
+        (select_any_by_fid_wire(FileId::MF), ok_response(&[])),
+        (select_esign_wire(), response(&[], StatusWord::FileNotFound)),
+        (
+            select_child_df_wire(DF_ESIGN_FID),
+            response(&[], StatusWord::FileNotFound),
+        ),
+        (select_any_by_fid_wire(DF_ESIGN_FID), ok_response(&[])),
+    ]);
+
+    transport
+        .select_esign_directory()
+        .expect("the any-file fallback succeeds");
     transport.assert_drained();
 }
 

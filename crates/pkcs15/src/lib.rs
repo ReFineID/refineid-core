@@ -26,9 +26,9 @@ pub mod token_info;
 pub mod token_serial;
 
 pub use fs::{
-    CertSlot, DF_CERT_DIRECTORY_FID, EF_AUTH_CERT_ALT_FID, EF_AUTH_CERT_FID, EF_ISSUING_CA_ECC_FID,
-    EF_ROOT_CA_FID, EF_SIGN_CERT_ALT_FID, EF_SIGN_CERT_FID, EF_TOKEN_INFO_FID, PKCS15_AID,
-    Pkcs15Error, Pkcs15Ops,
+    CertSlot, DF_ESIGN_FID, EF_AUTH_CERT_ALT_FID, EF_AUTH_CERT_FID, EF_ISSUING_CA_ECC_FID,
+    EF_ROOT_CA_FID, EF_SIGN_CERT_ALT_FID, EF_SIGN_CERT_FID, EF_TOKEN_INFO_FID, ESIGN_AID,
+    PKCS15_AID, Pkcs15Error, Pkcs15Ops,
 };
 pub use token_info::TokenInfo;
 pub use token_serial::{PrintedSerial, TokenSerial, derive_printed_serial, render_token_serial};
