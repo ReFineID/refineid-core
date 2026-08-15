@@ -180,6 +180,33 @@ fn citizen_ecdsa_p384_signs_over_the_loaded_hash() {
 }
 
 #[test]
+fn citizen_ecdsa_p384_sha256_uses_the_negotiated_hash_reference() {
+    let digest = [DIGEST_FILL; SHA256_LEN];
+    let signature = vec![SIG_FILL; ECDSA_P384_SIG_BYTES];
+    let mut transport = Scripted::new(vec![
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA256_ECDSA,
+                KeyRef::Auth,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha256(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(ecdsa_le()), success(signature.clone())),
+    ]);
+
+    let result = transport
+        .sign_prehashed_sha256_ecdsa(SignScheme::Citizen, KeyRef::Auth, digest)
+        .expect("scripted SHA-256 ECDSA sign succeeds");
+    assert_eq!(result.as_bytes(), signature.as_slice());
+    assert!(transport.drained());
+}
+
+#[test]
 fn organizational_sign_skips_pso_hash_and_carries_the_digest_inline() {
     let digest = [DIGEST_FILL; SHA384_LEN];
     let signature = vec![SIG_FILL; ECDSA_P384_SIG_BYTES];

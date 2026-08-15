@@ -148,7 +148,8 @@ checklist and the Apple release plan.
 
 The sixth slice admits card-side signing in `refineid-sign`:
 
-- `sign_prehashed_sha256_rsa` and `sign_prehashed_sha384_ecdsa` drive the
+- `sign_prehashed_sha256_rsa`, `sign_prehashed_sha256_ecdsa`, and
+  `sign_prehashed_sha384_ecdsa` drive the
   MANAGE SECURITY ENVIRONMENT / PERFORM SECURITY OPERATION choreography:
   MSE:SET pins the key and algorithm in the digital-signature template --
   the only template the specification sets for PSO:COMPUTE DIGITAL
@@ -329,7 +330,8 @@ PSO:DECIPHER chain together with the command chaining that carries the
 modulus-wide cryptogram.
 
 The newer card, a dual-algorithm card, exercised the SubjectPublicKeyInfo
-layer and the ECDSA signing chain over contact. Its certificate slots
+layer and the SHA-384 ECDSA signing chain over contact. The SHA-256 ECDSA
+chain remains covered by scripted-transport tests. Its certificate slots
 classified as expected -- P-384 elliptic-curve keys for the primary
 authentication, signature, and CA certificates, and RSA-3072 and RSA-4096
 keys in the alternate slots -- confirming both the elliptic-curve and the

@@ -28,10 +28,10 @@
 //!
 //! The pre-hashed signing chains all fit the short-form command:
 //! RSASSA-PKCS1-v1_5 and RSASSA-PSS over SHA-256 for the RSA keys, and
-//! ECDSA over P-384 for the newer keys. PSS is a card-native scheme -- the
-//! card applies the padding from the digest, so the choreography is the
-//! pre-hashed chain with a different algorithm reference, not a
-//! host-encoded block.
+//! ECDSA over P-384 with SHA-256 or SHA-384 for the newer keys. PSS is a
+//! card-native scheme -- the card applies the padding from the digest, so
+//! the choreography is the pre-hashed chain with a different algorithm
+//! reference, not a host-encoded block.
 //!
 //! RSA decipher is the other private-key operation here: `decipher_rsa`
 //! sets the confidentiality template and ships the modulus-wide cryptogram
@@ -321,6 +321,41 @@ pub trait SignOps: CardTransport {
             key,
             ExternalHashValue::Sha256(digest),
             expected_length_le(RSA_3072_SIG_BYTES),
+        )?;
+        Ok(Signature::from_card_bytes(bytes)?)
+    }
+
+    /// Sign a SHA-256 digest with a P-384 key, returning the raw ECDSA
+    /// `r || s` signature.
+    ///
+    /// TLS 1.2 peers may negotiate ECDSA with SHA-256 even when the
+    /// certificate carries a P-384 key. The curve fixes the signature
+    /// width; the negotiated hash fixes this method's digest width and
+    /// algorithm reference. The key's PIN must already be verified in the
+    /// card session, and `scheme` must be the family the session resolved.
+    /// On an organizational card the qualified key is local to DF.ESIGN, so
+    /// that directory must be the selected DF.
+    ///
+    /// # Errors
+    ///
+    /// Any stage failure, or a signature length other than
+    /// [`ECDSA_P384_SIG_BYTES`].
+    fn sign_prehashed_sha256_ecdsa(
+        &mut self,
+        scheme: SignScheme,
+        key: KeyRef,
+        digest: [u8; SHA256_LEN],
+    ) -> Result<Signature<EcdsaP384>, SignError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let bytes = drive_chain(
+            self,
+            scheme,
+            SignatureAlgRef::SHA256_ECDSA,
+            key,
+            ExternalHashValue::Sha256(digest),
+            expected_length_le(ECDSA_P384_SIG_BYTES),
         )?;
         Ok(Signature::from_card_bytes(bytes)?)
     }

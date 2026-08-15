@@ -17,13 +17,14 @@ same operations work over a PACE secure-messaging transport unchanged.
 
 `SignOps::sign_prehashed_sha256_rsa` covers the RSA keys (RSASSA-PKCS1
 over SHA-256, an RSA-3072 signature), `sign_prehashed_sha256_rsa_pss`
-covers the same keys under RSASSA-PSS, and `sign_prehashed_sha384_ecdsa`
-covers the newer P-384 keys (ECDSA over SHA-384, raw `r || s`). PSS is a
-card-native scheme: the card applies the padding from the digest, so the
-choreography matches the pre-hashed chain with a different algorithm
-reference. The signature bytes are returned in an algorithm-typed
-container. PSO:DECIPHER, whose modulus-wide ciphertext needs command
-chaining, follows in a later slice.
+covers the same keys under RSASSA-PSS, and
+`sign_prehashed_sha256_ecdsa` plus `sign_prehashed_sha384_ecdsa` cover
+the newer P-384 keys with the SHA-256 and SHA-384 schemes TLS peers can
+negotiate (raw `r || s`). PSS is a card-native scheme: the card applies
+the padding from the digest, so the choreography matches the pre-hashed
+chain with a different algorithm reference. The signature bytes are
+returned in an algorithm-typed container. PSO:DECIPHER, whose
+modulus-wide ciphertext needs command chaining, follows in a later slice.
 
 `SignOps::decipher_rsa` recovers an RSA cryptogram: it sets the
 confidentiality template and ships the modulus-wide cryptogram by command
@@ -36,13 +37,13 @@ which a T=0 card requires to answer directly; the wider RSA-3072
 signature uses the maximum-length encoding and the adapter chains the
 61xx response.
 
-The PSS, decipher, and ECDSA paths are hardware-validated: on the older
+The PSS, decipher, and SHA-384 ECDSA paths are hardware-validated: on the older
 card the authentication key produced a PSS signature that verified against
 its certificate and recovered a message encrypted to it, and on the newer
 card the authentication key produced a P-384 ECDSA signature that
-verified against its certificate. The PKCS#1 and organizational
-inline-digest chains rest on scripted-transport tests and, for the
-organizational chain, the behaviour reference, until each is observed on
-hardware. Constants and the command choreography are traced to the
+verified against its certificate. The PKCS#1, SHA-256 ECDSA, and
+organizational inline-digest chains rest on scripted-transport tests and,
+for the organizational chain, the behaviour reference, until each is
+observed on hardware. Constants and the command choreography are traced to the
 [DVV FINEID specifications](https://dvv.fi/en/fineid-specifications) (S1
 sections 3.6 through 3.9, S4-1, S4-2) and ISO/IEC 7816-4 and -8.
