@@ -21,7 +21,7 @@
 //! constants. This crate provides exactly that and nothing more -- it holds
 //! no key and performs no card I/O.
 //!
-//! [`Sha256`] and [`Sha384`] are fixed-length newtypes over the `sha2`
+//! [`Sha256`], [`Sha384`], and [`Sha512`] are fixed-length newtypes over the `sha2`
 //! crate's one-shot digest. Carrying the algorithm in the type keeps a raw
 //! byte array from standing in for a computed digest, and keeps a SHA-256
 //! value from being handed where a SHA-384 value is expected. [`HashAlg`]
@@ -123,6 +123,47 @@ impl Sha384 {
     }
 }
 
+/// A SHA-512 digest value.
+///
+/// Exactly [`SHA512_LEN`] bytes, bound to the algorithm by its type so it
+/// cannot be confused with a raw array or with a shorter SHA-2 value. The
+/// field is private: a value exists only through [`Sha512::of`] (a live
+/// digest) or [`Sha512::from_bytes`] (a caller-asserted precomputed digest).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sha512([u8; SHA512_LEN]);
+
+impl Sha512 {
+    /// Compute the SHA-512 digest of `data` with the `sha2` crate.
+    #[must_use]
+    pub fn of(data: &[u8]) -> Self {
+        let out = sha2::Sha512::digest(data);
+        let mut bytes = [0_u8; SHA512_LEN];
+        bytes.copy_from_slice(&out);
+        Self(bytes)
+    }
+
+    /// Wrap a precomputed SHA-512 digest.
+    ///
+    /// The caller asserts the bytes are a SHA-512 digest; the constructor
+    /// cannot verify that without the original message.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; SHA512_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; SHA512_LEN] {
+        &self.0
+    }
+
+    /// Consume the value and return the owned digest bytes.
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; SHA512_LEN] {
+        self.0
+    }
+}
+
 /// A SHA-1/SHA-2 hash-algorithm identifier.
 ///
 /// Parsed from a platform-supplied name and used to size or select a
@@ -194,7 +235,8 @@ impl TryFrom<&str> for HashAlg {
 #[cfg(test)]
 mod tests {
     use super::{
-        HashAlg, SHA1_LEN, SHA256_LEN, SHA384_LEN, SHA512_LEN, Sha256, Sha384, UnknownHashAlg,
+        HashAlg, SHA1_LEN, SHA256_LEN, SHA384_LEN, SHA512_LEN, Sha256, Sha384, Sha512,
+        UnknownHashAlg,
     };
 
     /// SHA-256 of the ASCII message "abc" (FIPS 180-4 known-answer test).
@@ -219,6 +261,15 @@ mod tests {
         0xc8, 0x25, 0xa7,
     ];
 
+    /// SHA-512 of the ASCII message "abc" (FIPS 180-4 known-answer test).
+    const SHA512_ABC: [u8; SHA512_LEN] = [
+        0xdd, 0xaf, 0x35, 0xa1, 0x93, 0x61, 0x7a, 0xba, 0xcc, 0x41, 0x73, 0x49, 0xae, 0x20, 0x41,
+        0x31, 0x12, 0xe6, 0xfa, 0x4e, 0x89, 0xa9, 0x7e, 0xa2, 0x0a, 0x9e, 0xee, 0xe6, 0x4b, 0x55,
+        0xd3, 0x9a, 0x21, 0x92, 0x99, 0x2a, 0x27, 0x4f, 0xc1, 0xa8, 0x36, 0xba, 0x3c, 0x23, 0xa3,
+        0xfe, 0xeb, 0xbd, 0x45, 0x4d, 0x44, 0x23, 0x64, 0x3c, 0xe8, 0x0e, 0x2a, 0x9a, 0xc9, 0x4f,
+        0xa5, 0x4c, 0xa4, 0x9f,
+    ];
+
     #[test]
     fn sha256_of_abc_matches_fips_known_answer() {
         assert_eq!(Sha256::of(b"abc").as_bytes(), &SHA256_ABC);
@@ -235,6 +286,11 @@ mod tests {
     }
 
     #[test]
+    fn sha512_of_abc_matches_fips_known_answer() {
+        assert_eq!(Sha512::of(b"abc").as_bytes(), &SHA512_ABC);
+    }
+
+    #[test]
     fn sha256_from_bytes_round_trips_through_accessors() {
         let value = Sha256::from_bytes(SHA256_ABC);
         assert_eq!(value.as_bytes(), &SHA256_ABC);
@@ -246,6 +302,13 @@ mod tests {
         let value = Sha384::from_bytes(SHA384_ABC);
         assert_eq!(value.as_bytes(), &SHA384_ABC);
         assert_eq!(value.into_bytes(), SHA384_ABC);
+    }
+
+    #[test]
+    fn sha512_from_bytes_round_trips_through_accessors() {
+        let value = Sha512::from_bytes(SHA512_ABC);
+        assert_eq!(value.as_bytes(), &SHA512_ABC);
+        assert_eq!(value.into_bytes(), SHA512_ABC);
     }
 
     #[test]
