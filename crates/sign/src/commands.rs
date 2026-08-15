@@ -103,6 +103,9 @@ impl SignatureAlgRef {
     /// SHA-256 (high nibble 4) with RSASSA-PKCS1-v1_5 (low nibble 2):
     /// the RSA FINEID signing key's reference.
     pub const SHA256_RSA_PKCS1: Self = Self { byte: 0x42 };
+    /// SHA-384 (high nibble 5) with RSASSA-PKCS1-v1_5 (low nibble 2):
+    /// the RSA qualified-document signature reference.
+    pub const SHA384_RSA_PKCS1: Self = Self { byte: 0x52 };
     /// SHA-384 (high nibble 5) with ECDSA (low nibble 4): the newer
     /// P-384 key's reference (FINEID S4-1 v4.2 section 4.2).
     pub const SHA384_ECDSA: Self = Self { byte: 0x54 };
@@ -411,6 +414,8 @@ mod tests {
     const FILL: u8 = 0xAB;
     /// The documented SHA-256 + RSA-PKCS1 algorithm-reference byte.
     const ALG_SHA256_RSA: u8 = 0x42;
+    /// The documented SHA-384 + RSA-PKCS1 algorithm-reference byte.
+    const ALG_SHA384_RSA: u8 = 0x52;
     /// The documented SHA-384 + ECDSA algorithm-reference byte.
     const ALG_SHA384_ECDSA: u8 = 0x54;
     /// The documented SHA-256 + ECDSA algorithm-reference byte.
@@ -490,6 +495,7 @@ mod tests {
     #[test]
     fn algorithm_references_pack_the_documented_bytes() {
         assert_eq!(SignatureAlgRef::SHA256_RSA_PKCS1.as_byte(), ALG_SHA256_RSA);
+        assert_eq!(SignatureAlgRef::SHA384_RSA_PKCS1.as_byte(), ALG_SHA384_RSA);
         assert_eq!(SignatureAlgRef::SHA384_ECDSA.as_byte(), ALG_SHA384_ECDSA);
         assert_eq!(SignatureAlgRef::SHA256_ECDSA.as_byte(), ALG_SHA256_ECDSA);
         assert_eq!(

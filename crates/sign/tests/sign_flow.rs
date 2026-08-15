@@ -153,6 +153,34 @@ fn citizen_rsa_sha256_drives_the_three_command_chain() {
 }
 
 #[test]
+fn citizen_rsa_sha384_drives_the_qualified_signature_chain() {
+    let digest = [DIGEST_FILL; SHA384_LEN];
+    let signature = vec![SIG_FILL; RSA_3072_SIG_BYTES];
+    let mut transport = Scripted::new(vec![
+        (
+            mse_wire(
+                SignScheme::Citizen,
+                SignatureAlgRef::SHA384_RSA_PKCS1,
+                KeyRef::Sign,
+            ),
+            success(vec![]),
+        ),
+        (
+            pso_hash_wire(ExternalHashValue::Sha384(digest)),
+            success(vec![]),
+        ),
+        (pso_cds_empty_wire(rsa_le()), success(signature.clone())),
+    ]);
+
+    let result = transport
+        .sign_prehashed_sha384_rsa(SignScheme::Citizen, KeyRef::Sign, digest)
+        .expect("scripted qualified RSA sign succeeds");
+    assert_eq!(result.as_bytes(), signature.as_slice());
+    assert_eq!(result.len(), RSA_3072_SIG_BYTES);
+    assert!(transport.drained());
+}
+
+#[test]
 fn citizen_ecdsa_p384_signs_over_the_loaded_hash() {
     let digest = [DIGEST_FILL; SHA384_LEN];
     let signature = vec![SIG_FILL; ECDSA_P384_SIG_BYTES];

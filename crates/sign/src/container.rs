@@ -30,6 +30,10 @@ use crate::{ECDSA_P256_SIG_BYTES, ECDSA_P384_SIG_BYTES, RSA_3072_MODULUS_BYTES};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RsaPkcs1Sha256;
 
+/// RSASSA-PKCS1-v1_5 over SHA-384.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RsaPkcs1Sha384;
+
 /// RSASSA-PSS over SHA-256. The card performs the PSS encoding and the
 /// private-key operation from the host-supplied digest; the salt is the
 /// card's, so two signatures over the same digest differ.
@@ -48,6 +52,7 @@ mod sealed {
     pub trait Sealed {}
 
     impl Sealed for super::RsaPkcs1Sha256 {}
+    impl Sealed for super::RsaPkcs1Sha384 {}
     impl Sealed for super::RsaPssSha256 {}
     impl Sealed for super::EcdsaP384 {}
     impl Sealed for super::EcdsaP256 {}
@@ -65,6 +70,10 @@ pub trait SignatureLength: sealed::Sealed {
 }
 
 impl SignatureLength for RsaPkcs1Sha256 {
+    const SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
+}
+
+impl SignatureLength for RsaPkcs1Sha384 {
     const SIG_BYTES: usize = RSA_3072_MODULUS_BYTES;
 }
 
