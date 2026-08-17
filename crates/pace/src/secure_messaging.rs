@@ -149,6 +149,22 @@ impl<T: CardTransport> SmTransport<T> {
         self.inner
     }
 
+    /// Split into the raw transport and the live session keys and counter, so
+    /// a caller that holds the field open can rebuild the channel on the next
+    /// exchange without a fresh PACE handshake. The returned [`PaceSession`]
+    /// carries the advanced send-sequence counter, so the rebuilt channel stays
+    /// in step with the card. It is the inverse of [`Self::new`].
+    pub fn into_parts(self) -> (T, PaceSession) {
+        (
+            self.inner,
+            PaceSession {
+                k_enc: self.k_enc,
+                k_mac: self.k_mac,
+                ssc: self.ssc,
+            },
+        )
+    }
+
     /// Wrap a plain command APDU into a secure-messaging command,
     /// returning its header and protected body. The command data, when
     /// present, is encrypted; the padded plaintext is held in a
