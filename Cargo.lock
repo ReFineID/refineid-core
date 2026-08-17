@@ -358,6 +358,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "refineid-remote"
+version = "26.8.15"
+dependencies = [
+ "refineid-digest",
+]
+
+[[package]]
 name = "refineid-sign"
 version = "26.8.15"
 dependencies = [

@@ -37,6 +37,11 @@ crates stay transport-agnostic and country-profile-neutral.
 - `crates/pkcs15` (`refineid-pkcs15`) -- PKCS#15 file-system reads:
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
+- `crates/remote` (`refineid-remote`) -- typed remote-operation vocabulary
+  for the Remote Authorization Proxy Protocol (RAPP): the closed profile,
+  action, key-profile, and signature-algorithm registries with their
+  invariants carried by construction. Names and invariants only; RAPP's
+  wire, channels, and engines stay outside the core.
 - `crates/sign` (`refineid-sign`) -- card-side private-key operations: the
   MSE/PSO choreography for the pre-hashed RSA (PKCS#1 and PSS) and P-384
   ECDSA signing chains, over both the citizen chain (PSO:HASH then an empty

@@ -142,6 +142,20 @@ deployment details.
   hardware-validated. Secret, personal-information, protocol, and
   dependency scans were performed for this slice.
 
+- **Remote-operation vocabulary.** Publication under Apache-2.0 directed on
+  2026-08-17 for the new `refineid-remote` crate: the closed RAPP
+  credential-profile, action, key-profile, and signature-algorithm
+  registries as nominal types, the validated `SignatureRequest` and
+  `DisplayText` boundaries, and the profile-ownership rule for certificate
+  reads. Written fresh for this repository against the Remote Authorization
+  Proxy Protocol review draft 26.8.17.135 section 13.2.1; no private source
+  was copied. Digest lengths reuse `refineid-digest`; the SHA-224 length is
+  cited to FIPS 180-4. The crate holds no wire encoding, no cryptography,
+  and no credential representation. Covered by unit tests over the complete
+  registries; it touches no card, so no hardware validation applies.
+  Secret, personal-information, protocol, and dependency scans were
+  performed for this slice.
+
 Before a later slice is admitted, its review must record:
 
 - every source repository and selected path;

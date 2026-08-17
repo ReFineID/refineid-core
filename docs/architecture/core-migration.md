@@ -293,6 +293,22 @@ algorithms as compute-signature operations and fixes each PSS hash, MGF1 hash,
 and salt length. The added SHA-384 and SHA-512 chains are covered by scripted
 transport tests and are not recorded as hardware-validated.
 
+The thirteenth slice admits the remote-operation vocabulary in
+`refineid-remote`: the closed credential-profile, action, key-profile, and
+signature-algorithm registries of the Remote Authorization Proxy Protocol
+(RAPP), review draft 26.8.17.135 section 13.2.1, as nominal types with their
+invariants carried by construction. A `SignatureRequest` cannot exist with a
+digest of the wrong length or an algorithm its key profile does not support;
+consent display text is bounded and non-empty at its boundary; certificate
+reads are owned by the profile whose key the certificate serves. The crate
+holds names and invariants only -- RAPP's wire encoding, Noise channels,
+transports, engines, and stores all stay outside the core, and no CAN, PIN,
+or PUK value has any representation, because RAPP never transports them.
+Digest lengths reuse the named constants of `refineid-digest`; only the
+SHA-224 length is added, cited to FIPS 180-4. Covered by unit tests over the
+complete registries; nothing here touches a card, so no hardware validation
+applies.
+
 ## Hardware validation
 
 Slices two through five have been exercised against two citizen card

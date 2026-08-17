@@ -9,13 +9,14 @@ members = [
     "crates/pace",
     "crates/pin-cache",
     "crates/pkcs15",
+    "crates/remote",
     "crates/sign",
     "crates/x509",
     "tools/xtask",
 ]
 
 [workspace.package]
-version = "26.8.15"
+version = "26.8.17"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
@@ -26,6 +27,7 @@ repository = "https://github.com/ReFineID/refineid-core"
 refineid-apdu = { path = "crates/apdu" }
 refineid-auth = { path = "crates/auth" }
 refineid-ber = { path = "crates/ber" }
+refineid-digest = { path = "crates/digest" }
 refineid-pkcs15 = { path = "crates/pkcs15" }
 refineid-x509 = { path = "crates/x509" }
 aes = "0.9"
