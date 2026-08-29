@@ -1,0 +1,20 @@
+[package]
+name = "refineid-emrtd"
+description = "ICAO 9303 eMRTD application file reading and data parsing for FINEID cards"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+refineid-apdu.workspace = true
+refineid-ber.workspace = true
