@@ -15,7 +15,7 @@
 //! ICAO 9303 eMRTD application file reading and data parsing for FINEID cards.
 //!
 //! The operations layer on any [`refineid_apdu::CardTransport`], typically
-//! [`refineid_pace::SmTransport`] after establishing a PACE secure channel with
+//! a secure-messaging transport after establishing a PACE secure channel with
 //! the Card Access Number (CAN).
 
 pub mod applet;

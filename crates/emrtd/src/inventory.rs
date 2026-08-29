@@ -40,8 +40,10 @@ pub struct DataGroupInventory {
     pub has_dg12: bool,
 }
 
-impl Default for DataGroupInventory {
-    fn default() -> Self {
+impl DataGroupInventory {
+    /// Creates an empty data group inventory with all groups marked absent.
+    #[must_use]
+    pub const fn empty() -> Self {
         Self {
             has_dg1: false,
             has_dg2: false,
@@ -50,9 +52,7 @@ impl Default for DataGroupInventory {
             has_dg12: false,
         }
     }
-}
 
-impl DataGroupInventory {
     /// Parses the data group inventory from EF.COM contents.
     #[must_use]
     pub fn parse(com_bytes: &[u8]) -> Option<Self> {
@@ -61,7 +61,7 @@ impl DataGroupInventory {
             return None;
         }
 
-        let mut inventory = Self::default();
+        let mut inventory = Self::empty();
         for child_result in BerTlvIter::new(tlv.value()) {
             let child = child_result.ok()?;
             if child.tag() == DG_LIST_TAG {

@@ -139,8 +139,8 @@ impl ParsedMrzTd1 {
 mod tests {
     use super::ParsedMrzTd1;
 
-    const TEST_MRZ_RAW: &[u8] = b"I<FIN1234567894<<<<<<<<<<<<<<<\
-                                  8001014M3001012FIN<<<<<<<<<<<6\
+    const TEST_MRZ_RAW: &[u8] = b"I<FIN123456789<<<<<<<<<<<<<<<<\
+                                  800101<M300101<FIN<<<<<<<<<<<6\
                                   KOISTINEN<<PETRI<<<<<<<<<<<<<<";
 
     const DG1_HEADER_LEN: usize = 5;

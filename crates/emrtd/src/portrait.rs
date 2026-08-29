@@ -240,8 +240,8 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CardFaceImage, ImageFormat, JP2_HEADER_LEN, JP2_MAGIC_BOX, JPEG_HEADER_LEN,
-        JPEG_SOI_PREFIX, parse_card_face_image,
+        ImageFormat, JP2_HEADER_LEN, JP2_MAGIC_BOX, JPEG_HEADER_LEN, JPEG_SOI_PREFIX,
+        parse_card_face_image,
     };
 
     const TEST_WIDTH: u16 = 300;
