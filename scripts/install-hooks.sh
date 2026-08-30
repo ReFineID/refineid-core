@@ -4,7 +4,8 @@
 #
 # core.hooksPath is a local setting git does not apply automatically on clone,
 # so each working copy runs this once. It points git at the tracked .githooks
-# directory, activating the once-a-day version date stamp.
+# directory, activating the once-a-day version date stamp and the mandatory
+# quality gates: fast checks at commit, the full floor at push.
 set -eu
 
 root=$(git rev-parse --show-toplevel)

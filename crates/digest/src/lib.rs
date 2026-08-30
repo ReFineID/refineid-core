@@ -34,12 +34,99 @@ use sha2::Digest as _;
 
 /// SHA-1 digest length in bytes (FIPS 180-4 section 1: a 160-bit digest).
 pub const SHA1_LEN: usize = 20;
+/// SHA-224 digest length in bytes (FIPS 180-4 section 1: a 224-bit digest).
+pub const SHA224_LEN: usize = 28;
 /// SHA-256 digest length in bytes (FIPS 180-4 section 1: a 256-bit digest).
 pub const SHA256_LEN: usize = 32;
 /// SHA-384 digest length in bytes (FIPS 180-4 section 1: a 384-bit digest).
 pub const SHA384_LEN: usize = 48;
 /// SHA-512 digest length in bytes (FIPS 180-4 section 1: a 512-bit digest).
 pub const SHA512_LEN: usize = 64;
+
+/// A SHA-1 digest value.
+///
+/// Exactly [`SHA1_LEN`] bytes, bound to the algorithm by its type. SHA-1
+/// exists for verification of legacy signatures only (older CSCA
+/// self-signatures); nothing here signs or pins with it. The field is
+/// private: a value exists only through [`Sha1::of`] (a live digest) or
+/// [`Sha1::from_bytes`] (a caller-asserted precomputed digest).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sha1([u8; SHA1_LEN]);
+
+impl Sha1 {
+    /// Compute the SHA-1 digest of `data` with the `sha1` crate.
+    #[must_use]
+    pub fn of(data: &[u8]) -> Self {
+        let out = sha1::Sha1::digest(data);
+        let mut bytes = [0_u8; SHA1_LEN];
+        bytes.copy_from_slice(&out);
+        Self(bytes)
+    }
+
+    /// Wrap a precomputed SHA-1 digest.
+    ///
+    /// The caller asserts the bytes are a SHA-1 digest; the constructor
+    /// cannot verify that without the original message.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; SHA1_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; SHA1_LEN] {
+        &self.0
+    }
+
+    /// Consume the value and return the owned digest bytes.
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; SHA1_LEN] {
+        self.0
+    }
+}
+
+/// A SHA-224 digest value.
+///
+/// Exactly [`SHA224_LEN`] bytes, bound to the algorithm by its type so it
+/// cannot be confused with the 32-byte SHA-256 or 48-byte SHA-384 values.
+/// Some trust-service profiles accept SHA-224 alongside SHA-256 for ECDSA
+/// shapes. The field is private: a value exists only through
+/// [`Sha224::of`] (a live digest) or [`Sha224::from_bytes`] (a
+/// caller-asserted precomputed digest).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sha224([u8; SHA224_LEN]);
+
+impl Sha224 {
+    /// Compute the SHA-224 digest of `data` with the `sha2` crate.
+    #[must_use]
+    pub fn of(data: &[u8]) -> Self {
+        let out = sha2::Sha224::digest(data);
+        let mut bytes = [0_u8; SHA224_LEN];
+        bytes.copy_from_slice(&out);
+        Self(bytes)
+    }
+
+    /// Wrap a precomputed SHA-224 digest.
+    ///
+    /// The caller asserts the bytes are a SHA-224 digest; the constructor
+    /// cannot verify that without the original message.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; SHA224_LEN]) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the digest bytes.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; SHA224_LEN] {
+        &self.0
+    }
+
+    /// Consume the value and return the owned digest bytes.
+    #[must_use]
+    pub const fn into_bytes(self) -> [u8; SHA224_LEN] {
+        self.0
+    }
+}
 
 /// A SHA-256 digest value.
 ///
@@ -235,8 +322,8 @@ impl TryFrom<&str> for HashAlg {
 #[cfg(test)]
 mod tests {
     use super::{
-        HashAlg, SHA1_LEN, SHA256_LEN, SHA384_LEN, SHA512_LEN, Sha256, Sha384, Sha512,
-        UnknownHashAlg,
+        HashAlg, SHA1_LEN, SHA224_LEN, SHA256_LEN, SHA384_LEN, SHA512_LEN, Sha1, Sha224, Sha256,
+        Sha384, Sha512, UnknownHashAlg,
     };
 
     /// SHA-256 of the ASCII message "abc" (FIPS 180-4 known-answer test).
@@ -269,6 +356,42 @@ mod tests {
         0xfe, 0xeb, 0xbd, 0x45, 0x4d, 0x44, 0x23, 0x64, 0x3c, 0xe8, 0x0e, 0x2a, 0x9a, 0xc9, 0x4f,
         0xa5, 0x4c, 0xa4, 0x9f,
     ];
+
+    /// SHA-1 of the ASCII message "abc" (FIPS 180-4 known-answer test).
+    const SHA1_ABC: [u8; SHA1_LEN] = [
+        0xa9, 0x99, 0x3e, 0x36, 0x47, 0x06, 0x81, 0x6a, 0xba, 0x3e, 0x25, 0x71, 0x78, 0x50, 0xc2,
+        0x6c, 0x9c, 0xd0, 0xd8, 0x9d,
+    ];
+
+    /// SHA-224 of the ASCII message "abc" (FIPS 180-4 known-answer test).
+    const SHA224_ABC: [u8; SHA224_LEN] = [
+        0x23, 0x09, 0x7d, 0x22, 0x34, 0x05, 0xd8, 0x22, 0x86, 0x42, 0xa4, 0x77, 0xbd, 0xa2, 0x55,
+        0xb3, 0x2a, 0xad, 0xbc, 0xe4, 0xbd, 0xa0, 0xb3, 0xf7, 0xe3, 0x6c, 0x9d, 0xa7,
+    ];
+
+    #[test]
+    fn sha1_of_abc_matches_fips_known_answer() {
+        assert_eq!(Sha1::of(b"abc").as_bytes(), &SHA1_ABC);
+    }
+
+    #[test]
+    fn sha224_of_abc_matches_fips_known_answer() {
+        assert_eq!(Sha224::of(b"abc").as_bytes(), &SHA224_ABC);
+    }
+
+    #[test]
+    fn sha1_from_bytes_round_trips_through_accessors() {
+        let value = Sha1::from_bytes(SHA1_ABC);
+        assert_eq!(value.as_bytes(), &SHA1_ABC);
+        assert_eq!(value.into_bytes(), SHA1_ABC);
+    }
+
+    #[test]
+    fn sha224_from_bytes_round_trips_through_accessors() {
+        let value = Sha224::from_bytes(SHA224_ABC);
+        assert_eq!(value.as_bytes(), &SHA224_ABC);
+        assert_eq!(value.into_bytes(), SHA224_ABC);
+    }
 
     #[test]
     fn sha256_of_abc_matches_fips_known_answer() {

@@ -27,3 +27,7 @@ if [ "$current" != "$today" ]; then
     git add "$manifest"
     echo "stamp-version: workspace version $current -> $today (UTC day change)"
 fi
+
+# Mandatory fast quality gates; bypassing them (--no-verify or
+# otherwise) is prohibited for every contributor, human or AI agent.
+exec "$root/scripts/verify-commit.sh"

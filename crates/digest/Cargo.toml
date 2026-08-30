@@ -18,3 +18,5 @@ workspace = true
 
 [dependencies]
 sha2.workspace = true
+# Verification-only legacy digests (older CSCA self-signatures).
+sha1.workspace = true

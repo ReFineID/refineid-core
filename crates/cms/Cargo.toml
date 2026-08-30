@@ -1,0 +1,35 @@
+[package]
+name = "refineid-cms"
+description = "Strict-DER CMS SignedData parsing and offline signature verification -- the host-side trust checks for card-delivered documents. Entities and use cases, no transport awareness, no GUI awareness."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+refineid-ber.workspace = true
+refineid-digest.workspace = true
+# Compile-time dotted-decimal OID parser for the `oid::known` table.
+const-oid.workspace = true
+# Big-integer arithmetic for the RSA and ECDSA verification primitives.
+crypto-bigint.workspace = true
+# Legacy signature-digest support: older CSCA self-signatures still use
+# SHA-1 family algorithms; verification-only, never for new signatures.
+sha1.workspace = true
+sha2.workspace = true
+# Typed SubjectPublicKeyInfo parsing (re-exports `der`).
+spki.workspace = true
+# Typed X.509 Validity (notBefore/notAfter) decoding.
+x509-cert.workspace = true
+
+[dev-dependencies]
+hex.workspace = true

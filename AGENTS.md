@@ -45,6 +45,15 @@ section again. The design questions in the refinement-types policy's
 
 ## The floor
 
+The floor is enforced, not suggested: tracked git hooks (enable once per
+clone with `scripts/install-hooks.sh`) run the fast gates at commit and
+the full floor at push, and GitHub Actions reruns the full floor on
+every push and pull request. Never commit or push with `--no-verify`,
+never disable, weaken, or work around a gate, and never leave the hooks
+uninstalled. This binds every contributor, human and AI agent alike:
+fix the finding, or raise the policy question openly instead of dodging
+it.
+
 Mechanical requirements, all of them, before any commit:
 
 - `cargo fmt --check`, `cargo build`, `cargo test`, and
@@ -53,7 +62,9 @@ Mechanical requirements, all of them, before any commit:
 - `cargo run -q -p xtask -- check-magic-numbers` -- clean;
 - no anonymous numeric literals and no hand-typed hexadecimal arrays
   anywhere, tests included; wire fixtures are assembled from the same
-  named constants the serializer uses;
+  named constants the serializer uses; the admitted-as-is subtrees in
+  the xtask `POLICY_EXEMPT_SUBTREES` list (the RAPP bridge and its
+  pinned protocol corpus) are the sole, temporary exception;
 - new dependencies are exceptional and justified; nothing that drags a
   second DER stack or duplicates what a crate here already does;
 - safe Rust only; protocol, parsing, and secret handling never in

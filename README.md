@@ -25,9 +25,18 @@ crates stay transport-agnostic and country-profile-neutral.
   COUNTER (unblock) chains, and the retry-risk policy.
 - `crates/ber` (`refineid-ber`) -- minimal BER-TLV encoder and decoder
   with a typed tag layer.
+- `crates/cms` (`refineid-cms`) -- strict-DER CMS `SignedData` parsing and
+  offline signature verification, with the RSA and ECDSA verification
+  primitives and the X.509 certificate machinery they need. The
+  host-side trust checks for card-delivered documents; verify-only by
+  design, no key generation and no platform crypto dependency.
 - `crates/digest` (`refineid-digest`) -- typed SHA-2 digest values and
   hash-algorithm identifiers with the digest lengths as named constants;
   no key material, no card I/O.
+- `crates/emrtd` (`refineid-emrtd`) -- ICAO 9303 eMRTD application file
+  reading and parsing (EF.COM inventory, TD1 MRZ, encoded face), and
+  passive authentication: EF.SOD signature, data-group hash comparison,
+  and the DSC-to-CSCA chain against verifier-supplied trust anchors.
 - `crates/pace` (`refineid-pace`) -- Card Access Number input type, the
   PACE handshake, and secure messaging.
 - `crates/pin-cache` (`refineid-pin-cache`) -- process-lifetime negative
@@ -37,11 +46,16 @@ crates stay transport-agnostic and country-profile-neutral.
 - `crates/pkcs15` (`refineid-pkcs15`) -- PKCS#15 file-system reads:
   selection, bounded reads, certificates as plain DER, EF.TokenInfo, and
   the typed chip-serial forms.
+- `crates/rapp` (`refineid-rapp`) -- the transport-independent Remote
+  Authorization Proxy Protocol core: offer and pairing lifecycle, the
+  mandatory Noise `XXpsk3` handshake and transport cipher, session and
+  operation engines, and the optional UniFFI `bindings` surface that
+  platform apps link. Transports stay underlays outside the protocol.
 - `crates/remote` (`refineid-remote`) -- typed remote-operation vocabulary
   for the Remote Authorization Proxy Protocol (RAPP): the closed profile,
   action, key-profile, and signature-algorithm registries with their
-  invariants carried by construction. Names and invariants only; RAPP's
-  wire, channels, and engines stay outside the core.
+  invariants carried by construction. Names and invariants only; the
+  protocol engine lives in `crates/rapp`.
 - `crates/sign` (`refineid-sign`) -- card-side private-key operations: the
   MSE/PSO choreography for the pre-hashed RSA (PKCS#1 and PSS) and P-384
   ECDSA signing chains, over both the citizen chain (PSO:HASH then an empty

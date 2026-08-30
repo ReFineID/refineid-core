@@ -23,6 +23,7 @@ pub mod error;
 pub mod inventory;
 pub mod mrz;
 pub mod ops;
+pub mod passive;
 pub mod portrait;
 pub mod reader;
 pub mod sfi;
@@ -32,6 +33,10 @@ pub use error::EmrtdError;
 pub use inventory::DataGroupInventory;
 pub use mrz::ParsedMrzTd1;
 pub use ops::EmrtdOps;
+pub use passive::{
+    AuthenticatedDocument, CscaAnchor, CscaAnchors, EfDg1Bytes, EfDg2Bytes, EfSodBytes,
+    PassiveAuthenticationError, PassiveAuthenticationFiles, authenticate_document,
+};
 pub use portrait::{CardFaceImage, ImageFormat, parse_card_face_image};
 pub use reader::{decode_outer_total_length, read_emrtd_file};
 pub use sfi::{SFI_EF_COM, SFI_EF_DG1, SFI_EF_DG2, SFI_EF_DG7, SFI_EF_SOD, Sfi};

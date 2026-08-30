@@ -64,10 +64,9 @@ fn check_magic_numbers(root: &Path) -> Result<(), String> {
     validate_cargo_targets(root)?;
 
     let mut all_violations = Vec::new();
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|entry| is_source_tree_entry(root, entry))
-    {
+    for entry in WalkDir::new(root).into_iter().filter_entry(|entry| {
+        is_source_tree_entry(root, entry) && !is_policy_exempt_path(root, entry.path())
+    }) {
         let entry = entry.map_err(|error| format!("cannot walk source tree: {error}"))?;
         reject_source_tree_symlink(&entry)?;
         if !entry.file_type().is_file() {
@@ -230,11 +229,34 @@ fn is_ignored_root_path(root: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
+    // The lock file is generated, not authored; its dependency checksums
+    // are hex strings that can contain radix-prefix lookalikes.
+    if relative == Path::new("Cargo.lock") {
+        return true;
+    }
     matches!(
         relative.components().next(),
         Some(std::path::Component::Normal(name))
             if name == OsStr::new(".git") || name == OsStr::new("target")
     )
+}
+
+/// Subtrees admitted before they satisfy the numeric and source-indirection
+/// policy. The RAPP engine arrived from the ReFineID mono repository as the
+/// working Android bridge, together with its pinned protocol corpus. The
+/// Apple-native implementation is the only pairing proven live, so the bridge
+/// is admitted as-is instead of being hardened speculatively; it may be
+/// simplified against the live-proven behaviour rather than polished. Remove
+/// an entry when its subtree is brought under policy or replaced.
+const POLICY_EXEMPT_SUBTREES: &[&str] = &["crates/rapp", "docs/protocols"];
+
+fn is_policy_exempt_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    POLICY_EXEMPT_SUBTREES
+        .iter()
+        .any(|subtree| relative.starts_with(subtree))
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -866,8 +888,8 @@ mod tests {
     use super::reject_source_tree_symlink;
     use super::{
         MagicNumberVisitor, Violation, ViolationKind, inspect_non_rust_bytes,
-        inspect_rust_comments, is_ignored_root_path, reject_executable_doctests,
-        validate_cargo_target_source,
+        inspect_rust_comments, is_ignored_root_path, is_policy_exempt_path,
+        reject_executable_doctests, validate_cargo_target_source,
     };
 
     fn literals(source: &str) -> Vec<String> {
@@ -1156,16 +1178,45 @@ mod tests {
     }
 
     #[test]
-    fn only_root_build_and_git_directories_are_ignored() {
+    fn only_generated_build_and_git_paths_are_ignored() {
         let root = Path::new("/workspace");
         assert!(is_ignored_root_path(root, Path::new("/workspace/target")));
         assert!(is_ignored_root_path(
             root,
             Path::new("/workspace/.git/objects")
         ));
+        assert!(is_ignored_root_path(
+            root,
+            Path::new("/workspace/Cargo.lock")
+        ));
         assert!(!is_ignored_root_path(
             root,
             Path::new("/workspace/src/target/mod.rs")
+        ));
+        assert!(!is_ignored_root_path(
+            root,
+            Path::new("/workspace/crates/apdu/Cargo.lock")
+        ));
+    }
+
+    #[test]
+    fn policy_exemption_covers_only_the_admitted_subtrees() {
+        let root = Path::new("/workspace");
+        assert!(is_policy_exempt_path(
+            root,
+            Path::new("/workspace/crates/rapp/src/wire.rs")
+        ));
+        assert!(is_policy_exempt_path(
+            root,
+            Path::new("/workspace/docs/protocols/vectors/rapp-v26.8.17.233.json")
+        ));
+        assert!(!is_policy_exempt_path(
+            root,
+            Path::new("/workspace/crates/rapp-other/src/lib.rs")
+        ));
+        assert!(!is_policy_exempt_path(
+            root,
+            Path::new("/workspace/crates/apdu/src/lib.rs")
         ));
     }
 

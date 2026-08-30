@@ -1,0 +1,5 @@
+[bindings.swift]
+module_name = "ReFineIDRapp"
+ffi_module_name = "ReFineIDRappFFI"
+ffi_module_filename = "ReFineIDRappFFI"
+generate_immutable_records = true

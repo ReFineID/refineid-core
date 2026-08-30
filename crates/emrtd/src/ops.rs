@@ -20,9 +20,10 @@ use crate::applet::select_emrtd_application;
 use crate::error::EmrtdError;
 use crate::inventory::DataGroupInventory;
 use crate::mrz::ParsedMrzTd1;
+use crate::passive::{EfDg1Bytes, EfDg2Bytes, EfSodBytes, PassiveAuthenticationFiles};
 use crate::portrait::{CardFaceImage, parse_card_face_image};
 use crate::reader::read_emrtd_file;
-use crate::sfi::{SFI_EF_COM, SFI_EF_DG1, SFI_EF_DG2};
+use crate::sfi::{SFI_EF_COM, SFI_EF_DG1, SFI_EF_DG2, SFI_EF_SOD};
 
 /// High-level operations for reading ICAO 9303 eMRTD applications.
 pub trait EmrtdOps: CardTransport {
@@ -63,6 +64,27 @@ pub trait EmrtdOps: CardTransport {
     fn read_mrz_td1(&mut self) -> Result<Option<ParsedMrzTd1>, EmrtdError<Self::Error>> {
         let bytes = read_emrtd_file(self, SFI_EF_DG1)?;
         Ok(ParsedMrzTd1::parse(&bytes))
+    }
+
+    /// Reads the three raw files passive authentication consumes --
+    /// EF.DG1, EF.DG2, and EF.SOD -- inside one selected eMRTD
+    /// application session, as boundary inputs for
+    /// [`crate::passive::authenticate_document`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmrtdError`] if any file read fails.
+    fn read_passive_authentication_files(
+        &mut self,
+    ) -> Result<PassiveAuthenticationFiles, EmrtdError<Self::Error>> {
+        let mrz = EfDg1Bytes::new(read_emrtd_file(self, SFI_EF_DG1)?);
+        let face = EfDg2Bytes::new(read_emrtd_file(self, SFI_EF_DG2)?);
+        let security_object = EfSodBytes::new(read_emrtd_file(self, SFI_EF_SOD)?);
+        Ok(PassiveAuthenticationFiles {
+            mrz,
+            face,
+            security_object,
+        })
     }
 }
 

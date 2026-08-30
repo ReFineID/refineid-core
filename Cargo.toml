@@ -5,19 +5,24 @@ members = [
     "crates/atr",
     "crates/auth",
     "crates/ber",
+    "crates/cms",
     "crates/digest",
     "crates/emrtd",
     "crates/pace",
     "crates/pin-cache",
     "crates/pkcs15",
+    "crates/rapp",
     "crates/remote",
     "crates/sign",
     "crates/x509",
     "tools/xtask",
 ]
+# The cargo-fuzz harness builds with its own profile and nightly
+# toolchain, so it stays outside the workspace.
+exclude = ["crates/rapp/fuzz"]
 
 [workspace.package]
-version = "26.8.29"
+version = "26.8.30"
 edition = "2024"
 rust-version = "1.97"
 license = "Apache-2.0"
@@ -28,6 +33,7 @@ repository = "https://github.com/ReFineID/refineid-core"
 refineid-apdu = { path = "crates/apdu" }
 refineid-auth = { path = "crates/auth" }
 refineid-ber = { path = "crates/ber" }
+refineid-cms = { path = "crates/cms" }
 refineid-digest = { path = "crates/digest" }
 refineid-emrtd = { path = "crates/emrtd" }
 refineid-pkcs15 = { path = "crates/pkcs15" }
@@ -40,10 +46,34 @@ getrandom = "0.4"
 hmac = "0.13"
 proc-macro2 = { version = "1", features = ["span-locations"] }
 sha2 = "0.11"
+# Legacy signature-digest support for CMS verification only: older CSCA
+# self-signatures still use SHA-1 family algorithms.
+sha1 = "0.11"
+# Compile-time dotted-decimal OID parser for the cms `oid::known` table.
+const-oid = { version = "0.10", default-features = false }
+# Typed SubjectPublicKeyInfo parsing (re-exports `der`).
+spki = "0.8"
+# Typed X.509 Validity (notBefore/notAfter) decoding in cms::x509.
+x509-cert = { version = "0.3", default-features = false }
+# Test-fixture hex decoding.
+hex = "0.4"
 subtle = "2"
 rustc_lexer = "0.1"
 serde = "1"
 serde_json = "1"
+# Reads docs/protocols/rapp-state-machine-*.yaml in the model
+# conformance test; the rapp crate itself never parses YAML.
+serde_yaml = "0.9"
+# The Noise Protocol Framework handshakes and transport cipher for the
+# mandatory RAPP suite (crates/rapp); the protocol's security lives
+# here, transports are underlays. Default features drag the ring C
+# backend in through snow's std feature; the pure-Rust default resolver
+# is the only one in use, and the fixed-transcript corpus vectors prove
+# the trimmed build byte-identical.
+snow = { version = "0.10", default-features = false, features = ["default-resolver-crypto"] }
+# Swift/Kotlin bindings for the RAPP engine, behind the optional
+# `bindings` feature only; platform apps consume the staticlib.
+uniffi = "0.32"
 syn = { version = "2", features = ["full", "visit"] }
 trybuild = "1"
 walkdir = "2"
