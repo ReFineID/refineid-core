@@ -1,12 +1,9 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Copyright 2026 Petri Koistinen. Licensed under the Apache License, Version 2.0.
-# Stamp the workspace version's date to today (UTC), at most once per UTC day.
 #
-# The tracked version carries only the calendar date (YY.M.D). The +B build
-# stamp is a build-time value emitted by crates/apdu/build.rs and is never
-# committed, so this hook only ever rewrites the date, and only when the UTC
-# day has actually changed -- so an active day sees at most one version bump.
-set -eu
+# Mandatory pre-commit gate; enabled per clone by scripts/install-hooks.sh.
+# Bypassing it (--no-verify or otherwise) is prohibited for every
+# contributor, human or AI agent alike.
 
 root=$(git rev-parse --show-toplevel)
 manifest="$root/Cargo.toml"
@@ -24,7 +21,8 @@ current=${current%%+*}
 if [ "$current" != "$today" ]; then
     sed -i.bak "s|^version = \"$current\"|version = \"$today\"|" "$manifest"
     rm -f "$manifest.bak"
-    git add "$manifest"
+    cargo check --workspace --quiet 2>/dev/null || cargo check --workspace
+    git add "$manifest" "$root/Cargo.lock"
     echo "stamp-version: workspace version $current -> $today (UTC day change)"
 fi
 

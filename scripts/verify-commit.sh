@@ -21,4 +21,5 @@ fi
 
 cargo fmt --check
 cargo run -q -p xtask -- check-magic-numbers
+"$root/scripts/verify-hygiene.sh"
 echo "pre-commit gates passed"
