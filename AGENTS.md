@@ -97,3 +97,7 @@ before and the correction made the core better.
 - Claims about card behaviour, cryptography, or platform interfaces are
   verified against a primary source -- the FINEID specifications, ISO,
   the RFCs -- not assumed from memory.
+
+## Working discipline
+
+- Never poll background commands or set rapid check timers (e.g. 10s-30s). When running builds, tests, or async tasks, execute asynchronously and wait strictly for system completion notifications.
