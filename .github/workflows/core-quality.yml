@@ -25,6 +25,9 @@ jobs:
       - name: Show pinned Rust toolchain
         run: rustup show active-toolchain
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Reject anonymous protocol numbers
         run: cargo run --locked -p xtask -- check-magic-numbers
 
