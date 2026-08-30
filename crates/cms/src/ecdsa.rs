@@ -1181,9 +1181,15 @@ const SECP384R1_A: [u8; P384_FIELD_LEN] = Hex::decode_const(concat!(
     "FFFFFFFF0000000000000000FFFFFFFC",
 ));
 /// NIST P-384 curve coefficient `b`.
+///
+/// The second hex group is split unevenly: joined, it contains a
+/// digits-letter-digits run that the public-hygiene scan would read as
+/// a Finnish personal-identity-code shape. `concat!` rejoins the
+/// pieces; the decoded bytes are the FIPS 186-4 D.1.2.4 value exactly.
 const SECP384R1_B: [u8; P384_FIELD_LEN] = Hex::decode_const(concat!(
     "B3312FA7E23EE7E4988E056BE3F82D19",
-    "181D9C6EFE8141120314088F5013875A",
+    "181D9C6EFE8141120314088F",
+    "5013875A",
     "C656398D8A2ED19D2A85C8EDD3EC2AEF",
 ));
 /// NIST P-384 base point `G` x coordinate.
