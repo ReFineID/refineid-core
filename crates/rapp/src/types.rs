@@ -215,11 +215,17 @@ impl ProfileName {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "fi.eid.card-status.v1" => Some(Self::CardStatus),
-            "fi.eid.authentication.v1" => Some(Self::Authentication),
-            "fi.eid.document-signing.v1" => Some(Self::DocumentSigning),
-            "fi.eid.activation.v1" => Some(Self::Activation),
-            "fi.eid.pin-management.v1" => Some(Self::PinManagement),
+            "fi.refineid.card-status.v1" | "fi.eid.card-status.v1" => Some(Self::CardStatus),
+            "fi.refineid.authentication.v1" | "fi.eid.authentication.v1" => {
+                Some(Self::Authentication)
+            }
+            "fi.refineid.document-signing.v1" | "fi.eid.document-signing.v1" => {
+                Some(Self::DocumentSigning)
+            }
+            "fi.refineid.activation.v1" | "fi.eid.activation.v1" => Some(Self::Activation),
+            "fi.refineid.pin-management.v1" | "fi.eid.pin-management.v1" => {
+                Some(Self::PinManagement)
+            }
             _ => None,
         }
     }
