@@ -105,3 +105,4 @@ cargo run --locked -p xtask -- check-magic-numbers
 The project is early public work and does not yet publish a supported
 release.
 # Trigger CI
+# CI trigger again
