@@ -1,11 +1,9 @@
 # refineid-core
 
-
-
-Platform-independent ReFineID protocol core, as a family of small,
+Platform-independent RefineID protocol core, as a family of small,
 separately auditable Rust crates.
 
-ReFineID is an open implementation for FINEID electronic identity cards.
+RefineID is an open implementation for FINEID electronic identity cards.
 This repository is populated in reviewed slices: code is reconstructed at
 explicit trust boundaries, tested in isolation, and admitted only when it
 starts with zero known policy debt. Platform integration (PC/SC backends,
@@ -101,8 +99,3 @@ cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo run --locked -p xtask -- check-magic-numbers
 ```
-
-The project is early public work and does not yet publish a supported
-release.
-# Trigger CI
-# CI trigger again
