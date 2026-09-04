@@ -2,13 +2,13 @@
 
 Status: External-review draft  
 Intended status: Experimental  
-Document version: 26.8.17.233  
-Supersedes: 26.8.16.85  
+Document version: 26.9.4.181  
+Supersedes: 26.8.17.233  
 Protocol wire version: 26.8  
-Date: 2026-08-17  
+Date: 2026-09-04  
 Change controller: ReFineID project  
-Companion model: [RAPP state machine 26.8.17.233](rapp-state-machine-v26.8.17.233.yaml)  
-Conformance corpus: [RAPP vectors 26.8.17.233](vectors/rapp-v26.8.17.233.json)
+Companion model: [RAPP state machine 26.9.4.181](rapp-state-machine-v26.9.4.181.yaml)  
+Conformance corpus: [RAPP vectors 26.9.4.181](vectors/rapp-v26.9.4.181.json)
 
 ## Abstract
 
@@ -1568,7 +1568,7 @@ Conformance evidence includes:
 - production-artifact inspection proving unsafe diagnostics are absent.
 
 The machine-readable corpus at
-`vectors/rapp-v26.8.17.233.json` fixes the deterministic CBOR,
+`vectors/rapp-v26.9.4.181.json` fixes the deterministic CBOR,
 envelope-rejection, sequence, downgrade, grant, hash, and mandatory Noise
 XXpsk3/KK known-answer vectors for this document version. Fields prefixed
 `test_only_` are public deterministic test material and MUST NOT be used as
@@ -1756,3 +1756,8 @@ profile. Relative to the originally stamped 26.8.16.85 text:
   section and carried its vectors forward under this document version; and
 - corrected the abstract, which still described repeated-violation pairing
   destruction, to the single-violation rule.
+
+## Appendix D. Changes from 26.8.17.233
+
+Revision 26.9.4.181 canonicalizes the credential profile namespace to `fi.refineid.*`, removing legacy `fi.eid.*` references without backwards compatibility. The conformance corpus and state machine companion models are restamped under this document version.
+

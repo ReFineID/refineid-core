@@ -1208,7 +1208,7 @@ mod tests {
         ));
         assert!(is_policy_exempt_path(
             root,
-            Path::new("/workspace/docs/protocols/vectors/rapp-v26.8.17.233.json")
+            Path::new("/workspace/docs/protocols/vectors/rapp-v26.9.4.181.json")
         ));
         assert!(!is_policy_exempt_path(
             root,

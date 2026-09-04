@@ -287,6 +287,6 @@ fn encode_hex(bytes: &[u8]) -> String {
 
 fn load_corpus() -> Corpus {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/protocols/vectors/rapp-v26.8.17.233.json");
+        .join("../../docs/protocols/vectors/rapp-v26.9.4.181.json");
     serde_json::from_slice(&fs::read(path).expect("read RAPP corpus")).expect("decode RAPP corpus")
 }
