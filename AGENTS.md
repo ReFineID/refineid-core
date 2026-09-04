@@ -19,6 +19,14 @@ may predate its own review:
 - [docs/security/credential-custody.md](docs/security/credential-custody.md)
   -- how secrets move.
 
+## Rule #1: PIN codes NEVER travel over any network
+
+PIN codes (PIN1 and PIN2) NEVER leave the mobile phone when accessed via RAPP:
+- **Zero PIN transport**: RAPP must absolutely deny and preclude all attempts to transport PIN codes anywhere. No wire format, message, or API shall ever accept, serialize, or transmit PIN codes over the network.
+- **PIN1 stays local**: PIN1 is cached or entered strictly on the mobile device and verified locally with the card over NFC. The client receives only cryptographic proof (e.g. signature bytes or TLS client auth).
+- **PIN2 stays local**: PIN2 (qualified electronic signature) prompts appear exclusively on the mobile device's screen and are entered directly by the cardholder into the phone's protected UI.
+- **Host computer protected path**: The host computer and browsers never prompt for, receive, cache, or handle PIN codes when using remote readers (`CKF_PROTECTED_AUTHENTICATION_PATH`).
+
 ## Design before code
 
 Every slice starts as a short design, not as code. Before writing, answer
