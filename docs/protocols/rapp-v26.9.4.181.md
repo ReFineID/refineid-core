@@ -20,7 +20,7 @@ and an identity card communicating with the phone over NFC. The same protocol
 is intended to support macOS, iOS, Android, Windows, Linux, FreeBSD, local
 networks, and an untrusted Internet relay.
 
-RAPP pairs devices through a manually initiated, high-entropy QR offer. It then
+RAPP pairs devices through a manually initiated 6-digit numeric pairing code. It then
 uses end-to-end mutually authenticated sessions independently of the selected
 network transport. Every credential operation is typed, explicitly authorized
 on the proxy, bound to one session and operation identifier, and executed at
@@ -153,9 +153,9 @@ RAPP assumes an adversary may:
 - observe, delay, drop, duplicate, reorder, truncate, or inject network data;
 - control the rendezvous relay and transport discovery infrastructure;
 - cause ordinary network transitions and temporary loss;
-- replay an old QR image, handshake, frame, request, commit, or result;
-- present an attacker-controlled pairing QR to either user;
-- connect to an advertised pairing transport without knowing the QR secret;
+- replay an old pairing code, handshake, frame, request, commit, or result;
+- present an attacker-controlled pairing code to either user;
+- connect to an advertised pairing transport without knowing the pairing secret derived from the code;
 - submit malformed CBOR and unsupported extensions;
 - attempt version, cipher-suite, profile, or transport downgrade;
 - trigger concurrent sessions and duplicate operations;
@@ -167,7 +167,7 @@ RAPP assumes an adversary may:
 RAPP assumes:
 
 - the user controls both device displays during initial pairing;
-- the QR channel is not secretly recorded by an attacker during pairing;
+- the pairing code entry is not secretly observed by an attacker during pairing;
 - each endpoint has a cryptographically secure random-number generator;
 - each endpoint can protect a device-only, non-synchronized pairing key;
 - the authorization proxy UI and credential transport are trusted while used;
@@ -187,7 +187,7 @@ revoking a stored pairing, or learning pairing-payload content.
 ### 4.4 Explicit residual risks
 
 RAPP cannot prevent denial of service, endpoint compromise, misleading context
-provided by an unattested requester, shoulder-surfing of a pairing QR, or
+provided by an unattested requester, shoulder-surfing of a pairing code, or
 traffic analysis by a relay. A relay or on-path attacker can force any number
 of session closures; RAPP bounds the damage to reconnection effort and never
 to pairing loss. A profile MUST distinguish independently verified context
@@ -331,7 +331,8 @@ The following named limits apply:
 | `MAX_FRAME_PLAINTEXT` | 65,519 bytes per envelope |
 | `MAX_NESTING_DEPTH` | 8 containers |
 | `MAX_TEXT_SIZE` | 4,096 UTF-8 bytes |
-| `MAX_OFFER_SIZE` | 1,024 bytes before QR encoding |
+| `PAIRING_CODE_LENGTH` | 6 decimal digits (formatted in two 3-digit groups) |
+| `MAX_OFFER_SIZE` | 1,024 bytes |
 | `MAX_TRANSPORT_CANDIDATES` | 8 |
 | `MAX_ACTIVE_OPERATIONS` | 1 per proxy |
 | `OFFER_TTL_MAX` | 180,000 ms |
@@ -493,20 +494,27 @@ conservative message limit.
 ### 9.1 Manual initiation
 
 Pairing starts only after an explicit action on the requester. The requester
-creates one offer and displays it as a QR code. Background discovery MUST NOT
-create a pairing or extend an offer's life.
+creates one offer and displays a 6-digit numeric pairing code (formatted as two
+3-digit groups, e.g. `123 456`). Background discovery MUST NOT create a pairing
+or extend an offer's life.
 
-### 9.2 Pairing offer
+### 9.2 Pairing code and offer derivation
 
-The QR encodes deterministic CBOR using a `rapp:` URI carrying base64url data
-without padding, as defined by
+The pairing code is a 6-digit decimal number (`000000`–`999999`) generated randomly
+by the initiating peer and entered manually on the other peer.
+
+The offer identifier and pairing secret are deterministically derived from the code:
+- `pairing_secret` = `SHA-256("refineid-rapp-pairing-secret-v1:" || code)`
+- `offer_id` = `SHA-256("refineid-rapp-offer-id-v1:" || code)[0..16]`
+
+When serialized for programmatic or URI transport, the offer encodes deterministic CBOR using a `rapp:` URI carrying base64url data without padding, as defined by
 [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648.html). Its logical content is:
 
 ```cddl
 pairing-offer = {
   "scheme": "rapp",
   "version": [uint, uint],
-  "offer_id": bstr .size 32,
+  "offer_id": bstr .size 16,
   "pairing_secret": bstr .size 32,
   "suites": [1* tstr],
   "profiles": [1* tstr],
@@ -521,8 +529,7 @@ transport-candidate = {
 }
 ```
 
-The encoded offer MUST NOT exceed `MAX_OFFER_SIZE`, which keeps the QR code
-within comfortable scanning density. `offer_ttl_ms` MUST NOT exceed
+The encoded offer MUST NOT exceed `MAX_OFFER_SIZE`. `offer_ttl_ms` MUST NOT exceed
 `OFFER_TTL_MAX`; each side independently clamps it to local policy, the
 requester enforcing expiry with a monotonic clock and the proxy treating the
 value as an upper-bound hint without trusting the sender's wall clock.
@@ -533,17 +540,17 @@ its use as the handshake pre-shared key ends.
 
 ### 9.3 Pairing exchange
 
-1. The requester creates an offer, enters `offer_active`, and displays the QR.
-2. The proxy scans the QR and validates its structure, size, supported
+1. The requester creates an offer, enters `offer_active`, and displays the 6-digit pairing code.
+2. The proxy user inputs the 6-digit code, and the proxy validates its structure, supported
    version, suite, profile intersection, and local transport policy.
 3. The proxy selects exactly one offered transport candidate and connects.
    Logical Noise roles remain requester-initiator and proxy-responder
    regardless of which side opened the underlying socket.
-4. The peers run the pairing Noise handshake with `pairing_secret` as the
+4. The peers run the pairing Noise handshake with `pairing_secret` (derived from the code) as the
    `psk3` value, the prologue of Section 8.3, and empty handshake payloads.
 5. When the handshake completes, both peers derive the channel identifiers of
    Section 8.5, and both destroy the pairing secret. The requester hides the
-   QR and stops accepting further candidates for this offer.
+   pairing code and stops accepting further candidates for this offer.
 6. Both peers exchange `pairing.hello`: the negotiated-parameter echo, a
    display name, a platform description, and the requester's requested
    profiles. Names are labels, not identities.
@@ -603,11 +610,11 @@ the candidate keys, invalidates the offer, and returns both peers to
 `unpaired`. A confirmation phase that exceeds local policy time aborts the
 same way.
 
-### 9.5 Pairing confirmation and QR observation
+### 9.5 Pairing confirmation and out-of-band observation
 
-The 256-bit QR secret, not a short decimal code, authenticates the out-of-band
+The pairing secret derived from the 6-digit code authenticates the out-of-band
 exchange. Both endpoints still require explicit confirmation to prevent an
-unexpected scanner from silently becoming trusted. A presentation profile MAY
+unexpected peer from silently becoming trusted. A presentation profile MAY
 derive an accessible comparison representation from the final Noise handshake
 hash. Such a representation is an additional human check and MUST NOT reduce
 the cryptographic entropy used by the protocol.
@@ -1126,7 +1133,7 @@ journal.
 | State | Meaning |
 | --- | --- |
 | `unpaired` | no peer keys exist |
-| `offer_active` | one manual QR offer is live (requester only) |
+| `offer_active` | one manual pairing offer is live (requester only) |
 | `handshaking` | pairing Noise handshake is in progress |
 | `confirming` | authenticated exchange awaits both approvals |
 | `paired_disconnected` | durable pairing exists; no healthy session |
@@ -1134,7 +1141,7 @@ journal.
 | `revoked` | the pairing was deliberately terminated, locally or by authenticated peer notice |
 
 `revoked` is a fail-stop state. Existing keys cannot be reactivated. The user
-may forget the record and perform a completely new QR pairing with new keys.
+may forget the record and perform a completely new pairing with a new code and keys.
 Unauthenticated traffic, failed handshakes, and frames that fail authenticated
 decryption can never revoke a stored pairing.
 
@@ -1215,7 +1222,7 @@ machine-readable model and its generated tests:
 A successfully decrypted protocol violation proves that the peer holding the
 pair keys sent nonconforming traffic. The first such violation closes the
 session, moves the pairing immediately to `revoked`, destroys the pair keys,
-and requires a completely new manual QR pairing. RAPP 26.8 has no violation
+and requires a completely new manual pairing. RAPP 26.8 has no violation
 counter, grace event, automatic recovery, or restoration of revoked keys.
 
 Entering `revoked` sends, while an authenticated channel still exists, one
@@ -1605,10 +1612,10 @@ Review is specifically requested on:
 
 1. whether Noise revision 34 and the proposed `XXpsk3`/`KK` patterns are the
    right stable basis, or whether a standardized alternative is preferable;
-2. whether the QR possession assumption and two-sided confirmation adequately
-   address QR observation and pairing races;
+2. whether the pairing code entry assumption and two-sided confirmation adequately
+   address observation and pairing races;
 3. the correct accessible human-verification representation, if one is needed
-   in addition to the high-entropy QR;
+   in addition to the 6-digit code;
 4. whether pair-specific static X25519 keys provide the desired privacy and key
    lifecycle across all target platforms;
 5. operation-journal durability, and whether Section 12.6 status
@@ -1759,5 +1766,5 @@ profile. Relative to the originally stamped 26.8.16.85 text:
 
 ## Appendix D. Changes from 26.8.17.233
 
-Revision 26.9.4.181 canonicalizes the credential profile namespace to `fi.refineid.*`, removing legacy `fi.eid.*` references without backwards compatibility. The conformance corpus and state machine companion models are restamped under this document version.
+Revision 26.9.4.181 canonicalizes the credential profile namespace to `fi.refineid.*`, removing legacy `fi.eid.*` references without backwards compatibility, and documents the 6-digit numeric pairing code in place of obsolete QR code assumptions. The conformance corpus and state machine companion models are restamped under this document version.
 
