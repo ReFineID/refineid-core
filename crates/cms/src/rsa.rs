@@ -1195,8 +1195,8 @@ e7c1d3c8d5717a85f5e1d4cd3e8e95443ea76eeb220e2cc41cd57bd6e02bd9a8\
     fn fixed_sha256_pss_encoding_verifies_and_detects_tampering() {
         const ENCODED_BITS: usize = 1023;
         const SALT_BYTES: usize = 32;
-        /// Arbitrary salt fill byte for the well-formed encoding;
-        /// any value works, EMSA-PSS carries the salt verbatim.
+        // Arbitrary salt fill byte for the well-formed encoding;
+        // any value works, EMSA-PSS carries the salt verbatim.
         const SALT_FILL_BYTE: u8 = 42;
         let message = b"trusted-list signed info";
         let digest = Sha256::digest(message);
