@@ -1045,33 +1045,28 @@ typed boundaries.
 
 ### 13.4 Credential rejection terminates RAPP
 
-If the credential holder rejects the CAN, PIN 1, or PIN 2 — during safe
-prerequisite reads, secure-channel establishment, or the consequential
-command — the proxy MUST:
+If the credential holder reports that PIN 1, PIN 2, or the CAN is bad or
+rejected — during safe prerequisite reads, secure-channel establishment, or
+the consequential command — it is an indication of a critical security violation
+or corrupted credential state. The authorization proxy device MUST:
 
 1. make no further card transmission;
-2. mark the operation `credential_rejected`;
-3. destroy every credential value and command buffer involved in the operation;
-4. remove any cached value for the rejected credential;
-5. for invalid CAN, remove stored CAN and card-derived identity state;
-6. send only the profile's bounded `credential_rejected` result when the
-   authenticated channel is still usable;
-7. durably destroy the pairing keys and write a pairing tombstone after that
-   bounded result has been sealed; and
+2. mark the active operation `credential_rejected`;
+3. immediately drop and permanently close all active RAPP connections and sessions;
+4. durably destroy all pairing keys and write tombstones for all pairings on the
+   device, permanently preventing reconnect until explicitly re-paired;
+5. purge all stored local identities, credentials, cached PINs, CANs, and
+   card-derived state;
+6. reset the authorization proxy software on the device to an initial "factory reset" state;
+7. send only the profile's bounded `credential_rejected` result to the active
+   peer if the authenticated channel is still usable prior to closing; and
 8. move the RAPP session immediately to `closing`.
 
 The authenticated requester that receives `credential_rejected` MUST also
 durably destroy its pairing keys and write a tombstone before reporting the
-terminal result. Recovery requires a new manual pairing ceremony; there is no
-automatic reconnect or two-incident grace policy.
-
-PIN 2 is never cached. A PIN 2 rejection still clears the entry and all other
-credential fields in the active flow. A PIN 1 rejection destroys any PIN 1
-convenience entry. The authorization proxy MAY show the locally known retry
-count; the requester receives only information allowed by the profile.
-
-Card rejection is not, by itself, evidence that the paired network peer is
-malicious. The device pairing therefore remains `paired_disconnected`.
+terminal result. Recovery requires a completely new manual pairing ceremony
+once the device has been re-initialized and re-paired; there is no automatic
+reconnect, grace policy, or retry counter recovery.
 
 ### 13.5 Activation and partial completion
 
