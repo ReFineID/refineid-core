@@ -577,7 +577,7 @@ mod tests {
             OfferId::from_array([1; 32]),
             PairingSecret::from_random_bytes([2; 32]),
             vec![MANDATORY_PAIRING_SUITE.to_owned()],
-            vec!["fi.eid.card-status.v1".to_owned()],
+            vec!["fi.refineid.card-status.v1".to_owned()],
             vec![TransportCandidate {
                 profile: "local-quic-v1".to_owned(),
                 candidate_id: "candidate".to_owned(),
@@ -598,7 +598,7 @@ mod tests {
             OfferId::from_array([1; 32]),
             PairingSecret::from_random_bytes([2; 32]),
             vec![MANDATORY_PAIRING_SUITE.to_owned()],
-            vec!["fi.eid.card-status.v1".to_owned()],
+            vec!["fi.refineid.card-status.v1".to_owned()],
             vec![TransportCandidate {
                 profile: "local-quic-v1".to_owned(),
                 candidate_id: "candidate".to_owned(),
@@ -622,7 +622,7 @@ mod tests {
             OfferId::from_array([1; 32]),
             PairingSecret::from_random_bytes([2; 32]),
             vec![MANDATORY_PAIRING_SUITE.to_owned()],
-            vec!["fi.eid.card-status.v1".to_owned()],
+            vec!["fi.refineid.card-status.v1".to_owned()],
             vec![TransportCandidate {
                 profile: "local-quic-v1".to_owned(),
                 candidate_id: "candidate".to_owned(),

@@ -933,11 +933,11 @@ report, production log, or operation journal.
 
 | Profile | Purpose | Consequential command |
 | --- | --- | --- |
-| `fi.eid.card-status.v1` | inspect supported card and retry state | none |
-| `fi.eid.authentication.v1` | browser or application authentication | PIN 1 verify and private-key operation |
-| `fi.eid.document-signing.v1` | sign a document digest | PIN 2 verify and private-key operation |
-| `fi.eid.activation.v1` | activate factory PIN 1 or PIN 2 | one PIN change per operation |
-| `fi.eid.pin-management.v1` | change or reset one PIN | one PIN change or PUK reset |
+| `fi.refineid.card-status.v1` | inspect supported card and retry state | none |
+| `fi.refineid.authentication.v1` | browser or application authentication | PIN 1 verify and private-key operation |
+| `fi.refineid.document-signing.v1` | sign a document digest | PIN 2 verify and private-key operation |
+| `fi.refineid.activation.v1` | activate factory PIN 1 or PIN 2 | one PIN change per operation |
+| `fi.refineid.pin-management.v1` | change or reset one PIN | one PIN change or PUK reset |
 
 The card-status, authentication, and document-signing actions are defined
 below. Activation and PIN-management payloads remain reserved design space and
@@ -949,22 +949,22 @@ The initial action registry is closed:
 
 | Action | Owning profile | Consequential command |
 | --- | --- | --- |
-| `inspect_card` | `fi.eid.card-status.v1` | none |
-| `read_identity` | `fi.eid.card-status.v1` | none |
+| `inspect_card` | `fi.refineid.card-status.v1` | none |
+| `read_identity` | `fi.refineid.card-status.v1` | none |
 | `read_certificate` | key-matching profile, below | none |
-| `browser_authenticate` | `fi.eid.authentication.v1` | PIN 1 verify and private-key operation |
-| `sign_document` | `fi.eid.document-signing.v1` | PIN 2 verify and private-key operation |
+| `browser_authenticate` | `fi.refineid.authentication.v1` | PIN 1 verify and private-key operation |
+| `sign_document` | `fi.refineid.document-signing.v1` | PIN 2 verify and private-key operation |
 
 `inspect_card` and `read_identity` carry empty context and payload maps.
 `read_certificate` carries exactly one payload field, `kind`, whose registered
 values are `authentication` and `signature`. The action is owned by the
 profile whose key the certificate serves: reading the authentication
-certificate requires the `fi.eid.authentication.v1` grant, and reading the
-signature certificate requires the `fi.eid.document-signing.v1` grant, so a
+certificate requires the `fi.refineid.authentication.v1` grant, and reading the
+signature certificate requires the `fi.refineid.document-signing.v1` grant, so a
 requester never learns a certificate whose key it could not ask to use. All
 three reads are safe reads and omit prepare and commit (Section 12.2).
 
-`browser_authenticate` under `fi.eid.authentication.v1` carries:
+`browser_authenticate` under `fi.refineid.authentication.v1` carries:
 
 | Map | Field | Type | Meaning |
 | --- | --- | --- | --- |
@@ -973,7 +973,7 @@ three reads are safe reads and omit prepare and commit (Section 12.2).
 | payload | `algorithm` | registered text | exact signature algorithm |
 | payload | `digest` | bytes | already-hashed challenge of the registered length |
 
-`sign_document` under `fi.eid.document-signing.v1` has the same payload fields
+`sign_document` under `fi.refineid.document-signing.v1` has the same payload fields
 and carries bounded non-empty `document_name` in its context map instead of
 `origin`. Documents and unhashed browser input MUST NOT cross RAPP.
 

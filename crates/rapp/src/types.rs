@@ -203,11 +203,11 @@ impl ProfileName {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::CardStatus => "fi.eid.card-status.v1",
-            Self::Authentication => "fi.eid.authentication.v1",
-            Self::DocumentSigning => "fi.eid.document-signing.v1",
-            Self::Activation => "fi.eid.activation.v1",
-            Self::PinManagement => "fi.eid.pin-management.v1",
+            Self::CardStatus => "fi.refineid.card-status.v1",
+            Self::Authentication => "fi.refineid.authentication.v1",
+            Self::DocumentSigning => "fi.refineid.document-signing.v1",
+            Self::Activation => "fi.refineid.activation.v1",
+            Self::PinManagement => "fi.refineid.pin-management.v1",
         }
     }
 
@@ -215,17 +215,11 @@ impl ProfileName {
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            "fi.refineid.card-status.v1" | "fi.eid.card-status.v1" => Some(Self::CardStatus),
-            "fi.refineid.authentication.v1" | "fi.eid.authentication.v1" => {
-                Some(Self::Authentication)
-            }
-            "fi.refineid.document-signing.v1" | "fi.eid.document-signing.v1" => {
-                Some(Self::DocumentSigning)
-            }
-            "fi.refineid.activation.v1" | "fi.eid.activation.v1" => Some(Self::Activation),
-            "fi.refineid.pin-management.v1" | "fi.eid.pin-management.v1" => {
-                Some(Self::PinManagement)
-            }
+            "fi.refineid.card-status.v1" => Some(Self::CardStatus),
+            "fi.refineid.authentication.v1" => Some(Self::Authentication),
+            "fi.refineid.document-signing.v1" => Some(Self::DocumentSigning),
+            "fi.refineid.activation.v1" => Some(Self::Activation),
+            "fi.refineid.pin-management.v1" => Some(Self::PinManagement),
             _ => None,
         }
     }

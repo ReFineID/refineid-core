@@ -63,11 +63,11 @@ impl RemoteProfile {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
-            Self::CardStatus => "fi.eid.card-status.v1",
-            Self::Authentication => "fi.eid.authentication.v1",
-            Self::DocumentSigning => "fi.eid.document-signing.v1",
-            Self::Activation => "fi.eid.activation.v1",
-            Self::PinManagement => "fi.eid.pin-management.v1",
+            Self::CardStatus => "fi.refineid.card-status.v1",
+            Self::Authentication => "fi.refineid.authentication.v1",
+            Self::DocumentSigning => "fi.refineid.document-signing.v1",
+            Self::Activation => "fi.refineid.activation.v1",
+            Self::PinManagement => "fi.refineid.pin-management.v1",
         }
     }
 
@@ -78,11 +78,11 @@ impl RemoteProfile {
     /// Fails on any name outside the closed registry.
     pub fn parse(name: &str) -> Result<Self, RemoteOperationError> {
         match name {
-            "fi.eid.card-status.v1" => Ok(Self::CardStatus),
-            "fi.eid.authentication.v1" => Ok(Self::Authentication),
-            "fi.eid.document-signing.v1" => Ok(Self::DocumentSigning),
-            "fi.eid.activation.v1" => Ok(Self::Activation),
-            "fi.eid.pin-management.v1" => Ok(Self::PinManagement),
+            "fi.refineid.card-status.v1" => Ok(Self::CardStatus),
+            "fi.refineid.authentication.v1" => Ok(Self::Authentication),
+            "fi.refineid.document-signing.v1" => Ok(Self::DocumentSigning),
+            "fi.refineid.activation.v1" => Ok(Self::Activation),
+            "fi.refineid.pin-management.v1" => Ok(Self::PinManagement),
             _ => Err(RemoteOperationError::UnknownName),
         }
     }
@@ -498,7 +498,7 @@ mod tests {
             );
         }
         assert_eq!(
-            RemoteProfile::parse("fi.eid.apdu-tunnel.v1"),
+            RemoteProfile::parse("fi.refineid.apdu-tunnel.v1"),
             Err(RemoteOperationError::UnknownName)
         );
     }

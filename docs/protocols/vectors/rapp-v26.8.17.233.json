@@ -169,52 +169,52 @@
     {
       "expected": "accepted",
       "granted_profiles": [
-        "fi.eid.card-status.v1"
+        "fi.refineid.card-status.v1"
       ],
       "name": "granted-card-status",
-      "requested_profile": "fi.eid.card-status.v1"
+      "requested_profile": "fi.refineid.card-status.v1"
     },
     {
       "expected": "profile_not_granted",
       "granted_profiles": [
-        "fi.eid.authentication.v1"
+        "fi.refineid.authentication.v1"
       ],
       "name": "card-status-not-granted",
-      "requested_profile": "fi.eid.card-status.v1"
+      "requested_profile": "fi.refineid.card-status.v1"
     },
     {
       "expected": "profile_not_granted",
       "granted_profiles": [],
       "name": "empty-grant-set",
-      "requested_profile": "fi.eid.card-status.v1"
+      "requested_profile": "fi.refineid.card-status.v1"
     }
   ],
   "grants_hash": [
     {
-      "canonical_cbor_hex": "81781866692e6569642e61757468656e7469636174696f6e2e7631",
+      "canonical_cbor_hex": "81781d66692e726566696e6569642e61757468656e7469636174696f6e2e7631",
       "name": "authentication-only",
       "profiles": [
-        "fi.eid.authentication.v1"
+        "fi.refineid.authentication.v1"
       ],
-      "sha256_hex": "9ad9e762644d8c40ec9099907f44a4fc2845090f8133337ebab739a4e4118baa"
+      "sha256_hex": "d60e334e1200548ec240612bae27ef68fb6cf3e5bdb871d65f2a50d9ad37c18c"
     },
     {
-      "canonical_cbor_hex": "82781866692e6569642e61757468656e7469636174696f6e2e76317566692e6569642e636172642d7374617475732e7631",
+      "canonical_cbor_hex": "82781d66692e726566696e6569642e61757468656e7469636174696f6e2e7631781a66692e726566696e6569642e636172642d7374617475732e7631",
       "name": "authentication-and-card-status",
       "profiles": [
-        "fi.eid.authentication.v1",
-        "fi.eid.card-status.v1"
+        "fi.refineid.authentication.v1",
+        "fi.refineid.card-status.v1"
       ],
-      "sha256_hex": "cc7ad6346fea138f7579ee039facf28775664c2cf345ea432a76fb8c59585132"
+      "sha256_hex": "9980c577cbf2e5642c7ecf05606b11eedcb8947d8c17b840a13f17830e41a0fc"
     },
     {
-      "canonical_cbor_hex": "82781866692e6569642e61757468656e7469636174696f6e2e76317566692e6569642e636172642d7374617475732e7631",
+      "canonical_cbor_hex": "82781d66692e726566696e6569642e61757468656e7469636174696f6e2e7631781a66692e726566696e6569642e636172642d7374617475732e7631",
       "name": "input-order-is-not-semantic",
       "profiles": [
-        "fi.eid.card-status.v1",
-        "fi.eid.authentication.v1"
+        "fi.refineid.card-status.v1",
+        "fi.refineid.authentication.v1"
       ],
-      "sha256_hex": "cc7ad6346fea138f7579ee039facf28775664c2cf345ea432a76fb8c59585132"
+      "sha256_hex": "9980c577cbf2e5642c7ecf05606b11eedcb8947d8c17b840a13f17830e41a0fc"
     }
   ],
   "identifier_derivation": [
@@ -431,10 +431,10 @@
         ],
         "kind": "map"
       },
-      "preimage_cbor_hex": "876f524150502d726571756573742d763150000102030405060708090a0b0c0d0e0f50101112131415161718191a1b1c1d1e1f781866692e6569642e61757468656e7469636174696f6e2e76316c61757468656e746963617465a1666f726967696e7468747470733a2f2f6578616d706c652e74657374a26664696765737444deadbeef69616c676f726974686d6c65636473615f736861323536",
-      "profile": "fi.eid.authentication.v1",
+      "preimage_cbor_hex": "876f524150502d726571756573742d763150000102030405060708090a0b0c0d0e0f50101112131415161718191a1b1c1d1e1f781d66692e726566696e6569642e61757468656e7469636174696f6e2e76316c61757468656e746963617465a1666f726967696e7468747470733a2f2f6578616d706c652e74657374a26664696765737444deadbeef69616c676f726974686d6c65636473615f736861323536",
+      "profile": "fi.refineid.authentication.v1",
       "session_id_hex": "000102030405060708090a0b0c0d0e0f",
-      "sha256_hex": "ed06172d8fcd596688db6a1c8b0931ccc113e8ff68dcfe05e2239e6a06b35d1b"
+      "sha256_hex": "ef71df1224e3db184cbf354a2e6a895528ce95dc2ae0c4b4fb64442f722167b6"
     }
   ],
   "sequence_guard": [
