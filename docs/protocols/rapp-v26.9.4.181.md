@@ -1633,6 +1633,31 @@ Review is specifically requested on:
     denial of service; and
 13. completeness of the composite state machine and formal verification plan.
 
+### 24.1 Review checklist
+
+An external reviewer should be able to answer:
+
+- What exact fact authenticates each peer during pairing and later sessions?
+- Which fields are bound to the cryptographic transcript, and can both peers
+  possess every bound value before the handshake?
+- Does any handshake message carry a payload readable before the pre-shared
+  key is mixed?
+- What can a malicious relay learn, modify, or permanently destroy?
+- Can network garbage, a corrupted frame, or a failed handshake force
+  permanent loss of a valid pairing or consume a live offer?
+- When can a credential or mutating card command physically occur?
+- How is a duplicate commit prevented after process failure?
+- Which failures close only a session and which destroy a pairing, and how
+  does the innocent peer learn of destruction?
+- What happens if NFC fails immediately before or after card transmission?
+- Does any path automatically retry an ambiguous operation, and how is an
+  ambiguous record later resolved without card replay?
+- What information reaches the requester, proxy, relay, and relying party?
+- Are all states visible and accessible without relying only on color or
+  motion?
+- Can an implementation accept an input that neither matches a modeled
+  transition nor an unexpected-input policy class?
+
 ## 25. References
 
 - Bradner, S., and J. Leiba, [Key words for use in RFCs to Indicate Requirement
@@ -1662,28 +1687,4 @@ Review is specifically requested on:
   [Doc 9303: Machine Readable Travel Documents, Part 11 — Security Mechanisms
   for MRTDs](https://www.icao.int/publications/pages/publication.aspx?docnum=9303).
 
-## Appendix. Review checklist
-
-An external reviewer should be able to answer:
-
-- What exact fact authenticates each peer during pairing and later sessions?
-- Which fields are bound to the cryptographic transcript, and can both peers
-  possess every bound value before the handshake?
-- Does any handshake message carry a payload readable before the pre-shared
-  key is mixed?
-- What can a malicious relay learn, modify, or permanently destroy?
-- Can network garbage, a corrupted frame, or a failed handshake force
-  permanent loss of a valid pairing or consume a live offer?
-- When can a credential or mutating card command physically occur?
-- How is a duplicate commit prevented after process failure?
-- Which failures close only a session and which destroy a pairing, and how
-  does the innocent peer learn of destruction?
-- What happens if NFC fails immediately before or after card transmission?
-- Does any path automatically retry an ambiguous operation, and how is an
-  ambiguous record later resolved without card replay?
-- What information reaches the requester, proxy, relay, and relying party?
-- Are all states visible and accessible without relying only on color or
-  motion?
-- Can an implementation accept an input that neither matches a modeled
-  transition nor an unexpected-input policy class?
 
