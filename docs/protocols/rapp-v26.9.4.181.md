@@ -4,7 +4,7 @@ Status: External-review draft
 Intended status: Experimental  
 Document version: 26.9.4.181  
 Supersedes: 26.8.17.233  
-Protocol wire version: 26.8  
+Protocol wire version: 26.9  
 Date: 2026-09-04  
 Change controller: ReFineID project  
 Companion model: [RAPP state machine 26.9.4.181](rapp-state-machine-v26.9.4.181.yaml)  
@@ -101,14 +101,14 @@ RAPP is not:
 The **Requester** asks for a typed credential operation. Examples include a
 browser authentication agent, a document-signing application, or an
 administrator requesting a PIN-management operation. The requester is the
-Noise initiator in RAPP 26.8.
+Noise initiator in RAPP 26.9.
 
 ### 3.2 Authorization Proxy
 
 The **Authorization Proxy** presents the operation to the user, obtains any
 required credential locally, communicates with the credential holder, and
 returns only the profile-defined result. A phone is the expected first proxy.
-The proxy is the Noise responder in RAPP 26.8.
+The proxy is the Noise responder in RAPP 26.9.
 
 ### 3.3 Credential Holder
 
@@ -233,7 +233,7 @@ account, hardware serial number, or globally stable device identifier.
 The wire version is a two-element `[major, minor]` array. A major-version
 difference is incompatible. A minor version may add non-critical fields only.
 Version and capability selection are authenticated as part of the Noise
-handshake transcript. RAPP 26.8 permits no silent downgrade and no 0-RTT
+handshake transcript. RAPP 26.9 permits no silent downgrade and no 0-RTT
 operation data.
 
 ## 7. Wire representation
@@ -610,7 +610,7 @@ the candidate keys, invalidates the offer, and returns both peers to
 `unpaired`. A confirmation phase that exceeds local policy time aborts the
 same way.
 
-### 9.5 Pairing confirmation and out-of-band observation
+### 9.5 Pairing confirmation and out-of-band verification
 
 The pairing secret derived from the 6-digit code authenticates the out-of-band
 exchange. Both endpoints still require explicit confirmation to prevent an
@@ -622,7 +622,7 @@ the cryptographic entropy used by the protocol.
 ## 10. Session establishment
 
 A paired requester opens a new transport only after explicit user or
-application action. RAPP 26.8 does not automatically reconnect a closed
+application action. RAPP 26.9 does not automatically reconnect a closed
 session.
 
 1. The requester selects one mutually stored transport profile and initiates
@@ -666,7 +666,7 @@ session.
    protocol violation.
 
 No application operation is permitted during connection or authentication.
-RAPP 26.8 has no 0-RTT data, session resumption, connection migration, or
+RAPP 26.9 has no 0-RTT data, session resumption, connection migration, or
 mid-session transport fallback. A new transport requires a new session and
 fresh handshake.
 
@@ -1105,7 +1105,7 @@ specification revision rather than an implementation guess.
 The machines describe instances, not singletons:
 
 - a **pairing instance** exists per stored or in-progress peer relationship;
-  `unpaired` is the absence of an instance, and a new offer or scan creates a
+  `unpaired` is the absence of an instance, and a new offer or pairing code entry creates a
   new instance with fresh keys;
 - a **session instance** exists per connection attempt; `absent` means no
   live instance for the pairing, and a new instance may be created whenever
@@ -1222,7 +1222,7 @@ machine-readable model and its generated tests:
 A successfully decrypted protocol violation proves that the peer holding the
 pair keys sent nonconforming traffic. The first such violation closes the
 session, moves the pairing immediately to `revoked`, destroys the pair keys,
-and requires a completely new manual pairing. RAPP 26.8 has no violation
+and requires a completely new manual pairing. RAPP 26.9 has no violation
 counter, grace event, automatic recovery, or restoration of revoked keys.
 
 Entering `revoked` sends, while an authenticated channel still exists, one
@@ -1279,7 +1279,7 @@ error-body = {
 }
 ```
 
-Registered `error` names in RAPP 26.8: `busy`, `unknown_operation`.
+Registered `error` names in RAPP 26.9: `busy`, `unknown_operation`.
 
 | Condition | Wire carrier | Session effect | Pairing effect | Credential attempts |
 | --- | --- | --- | --- | --- |
@@ -1423,7 +1423,7 @@ The relay MUST:
 - handle only encrypted frames and bounded routing metadata;
 - prevent one peer from enumerating other peers;
 - apply size, rate, lifetime, and connection limits before buffering;
-- avoid durable store-and-forward in RAPP 26.8;
+- avoid durable store-and-forward in RAPP 26.9;
 - ensure push notifications contain only an opaque wake hint;
 - delete queued ciphertext when a session closes or expires; and
 - document retained metadata and deletion periods.
@@ -1662,7 +1662,7 @@ Review is specifically requested on:
   [Doc 9303: Machine Readable Travel Documents, Part 11 — Security Mechanisms
   for MRTDs](https://www.icao.int/publications/pages/publication.aspx?docnum=9303).
 
-## Appendix A. Review checklist
+## Appendix. Review checklist
 
 An external reviewer should be able to answer:
 
@@ -1686,85 +1686,4 @@ An external reviewer should be able to answer:
   motion?
 - Can an implementation accept an input that neither matches a modeled
   transition nor an unexpected-input policy class?
-
-## Appendix B. Changes from 26.8.16.84
-
-Review of draft 26.8.16.84 found that it could not be implemented
-interoperably and that several routine events escalated to pairing
-destruction. This revision:
-
-- rebuilt transcript binding on values both peers possess, defined the
-  `offer_hash` preimage (bearer secret excluded), and derived `pair_id` and
-  `session_id` from the Noise handshake hash instead of transmitting them;
-- required empty Noise handshake payloads, moving names and grants behind the
-  completed handshake, because `psk3` authenticates nothing before message 3;
-- stopped burning a live offer on failed or unauthenticated handshakes;
-- added body schemas for every message type, pairing messages
-  (`pairing.hello`, `pairing.confirm`, `pairing.abort`), grant agreement with
-  `grants_hash`, and the exact `request_hash` preimage;
-- reclassified established-channel decryption failure as a session-only
-  integrity failure, removing the relay's ability to destroy a pairing, while
-  retaining immediate revocation for authenticated protocol violations;
-- made revocation visible to the other peer through authenticated close
-  reasons, with defined behavior when no channel exists;
-- added the missing routine transitions: peer close, transport failure and
-  EOF in every live state, pre-commit cancellation and expiry, card removal
-  before transmission, and prerequisite-phase credential rejection including
-  profiles with no consequential command;
-- keyed operation reclassification on session closure instead of any
-  departure from healthy, so a missed heartbeat no longer voids a committed
-  operation, and gave credential rejection precedence over ambiguity;
-- replaced wildcard transitions with role-annotated per-instance machines, an
-  explicit unexpected-input policy, and defined instance lifecycles, removing
-  the undefined reset and acknowledgment events;
-- added status reconciliation (`operation.status`) so an ambiguous record can
-  be resolved from the proxy journal without card replay;
-- corrected FINEID retry-counter facts: only a failed PUK reset consumes a
-  PUK attempt, and the CAN has no try counter, so counter rules now apply
-  only to counter-bearing credentials;
-- extended forget and revocation to destroy offer, candidate,
-  and session state coupled to the pairing; and
-- aligned frame limits with the Noise message ceiling, required pong
-  challenge verification, bounded offer lifetime and size, and defined the
-  storage protection of retained results.
-
-## Appendix C. Changes from 26.8.16.85
-
-Revision 26.8.17.233 restores the durable pairing design. The 26.8.17.213 single-handshake collapse -- an ephemeral, liveness-bound experiment in which a pairing lived only for the life of one connection -- was reverted, returning to durable pairing with the Noise_KK reconnect handshake so a requester, including a credential-store extension running in its own process, reconnects to a stored pairing per use without a running app. The wire version is `[26, 8]`, raised from the pre-release `[0, 1]` and hashed into the handshake prologue, so the conformance corpus is regenerated under it; the pairing design is otherwise the prior durable revision.
-
-Draft 26.8.16.85 continued to evolve after its version was stamped, so the
-label briefly named more than one document. This revision collects that
-drift under a fresh version and adds the first cross-platform transport
-profile. Relative to the originally stamped 26.8.16.85 text:
-
-- replaced per-pairing violation strikes and the quarantine state with
-  immediate revocation: the first authenticated protocol violation revokes
-  the pairing on both peers, removing `VIOLATION_STRIKE_LIMIT`, the
-  `quarantined` state, and the `pairing_quarantined` close reason;
-- extended credential rejection to durably revoke the pairing on both peers
-  with a written tombstone, replacing the earlier user-intent admission
-  record;
-- defined the closed action registry: `inspect_card`, `read_identity`,
-  `read_certificate`, `browser_authenticate`, and `sign_document`, with
-  certificate reads owned by the profile whose key the certificate serves;
-- defined the `browser_authenticate` and `sign_document` payload schemas and
-  the closed `key_profile` and `algorithm` registries, with digest lengths,
-  compatibility rules, and the proxy-side certificate match requirement;
-- registered `fi.refineid.stream.v1` (Section 16.1): a length-prefixed
-  stream profile in which the requester listens and the proxy dials, for
-  requester platforms without Apple-native connectivity;
-- generalized session establishment so that underlying connection direction
-  is a transport-profile property while the requester remains the handshake
-  initiator on every profile, and required a transport whose accepting
-  endpoint is the requester to indicate the pairing before the handshake;
-- added the derived `rendezvous_token` (Section 8.5), giving transports a
-  plaintext-safe pair-specific rendezvous value distinct from `pair_id`;
-- referenced the machine-readable conformance corpus from the conformance
-  section and carried its vectors forward under this document version; and
-- corrected the abstract, which still described repeated-violation pairing
-  destruction, to the single-violation rule.
-
-## Appendix D. Changes from 26.8.17.233
-
-Revision 26.9.4.181 canonicalizes the credential profile namespace to `fi.refineid.*`, removing legacy `fi.eid.*` references without backwards compatibility, and documents the 6-digit numeric pairing code in place of obsolete QR code assumptions. The conformance corpus and state machine companion models are restamped under this document version.
 

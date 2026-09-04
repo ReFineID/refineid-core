@@ -312,10 +312,10 @@ pub enum Action {
     GeneratePairingSecret,
     /// Start the offer's monotonic expiry clock.
     StartOfferExpiry,
-    /// Display the pairing offer QR.
-    DisplayQr,
-    /// Stop displaying the offer QR.
-    HideQr,
+    /// Display the pairing code.
+    DisplayPairingCode,
+    /// Stop displaying the pairing code.
+    HidePairingCode,
     /// Select exactly one offered transport candidate.
     SelectOneCandidate,
     /// Connect the selected transport candidate.
@@ -577,7 +577,7 @@ impl PairingState {
                         A::GenerateOfferId,
                         A::GeneratePairingSecret,
                         A::StartOfferExpiry,
-                        A::DisplayQr,
+                        A::DisplayPairingCode,
                     ],
                 }
             }
@@ -603,7 +603,11 @@ impl PairingState {
                 require(role == EndpointRole::Requester)?;
                 Transition {
                     state: Self::Unpaired,
-                    actions: &[A::DestroyPairingSecret, A::InvalidateOffer, A::HideQr],
+                    actions: &[
+                        A::DestroyPairingSecret,
+                        A::InvalidateOffer,
+                        A::HidePairingCode,
+                    ],
                 }
             }
             (Self::Handshaking, E::OfferExpiredOrCancelled) => {
@@ -625,7 +629,7 @@ impl PairingState {
                         A::DeriveChannelIdentifiers,
                         A::DestroyPairingSecret,
                         A::StopAcceptingCandidates,
-                        A::HideQr,
+                        A::HidePairingCode,
                         A::SendPairingHello,
                         A::ShowPeerAndRequestedGrants,
                     ],

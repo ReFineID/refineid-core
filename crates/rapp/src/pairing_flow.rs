@@ -1,4 +1,4 @@
-//! Manual QR pairing from one-use offer through mutually confirmed grants.
+//! Manual pairing from one-use offer through mutually confirmed grants.
 
 use core::fmt;
 
@@ -109,14 +109,14 @@ impl PairingHandshake {
     }
 
     /// End an unauthenticated candidate attempt without consuming the active
-    /// QR offer. The caller may start another candidate only after recovering
+    /// pairing offer. The caller may start another candidate only after recovering
     /// this value, so two attempts cannot share the one-use secret.
     #[must_use]
     pub fn abort(self) -> PairingOffer {
         self.offer
     }
 
-    /// Complete Noise, destroy the QR secret, and enter authenticated explicit
+    /// Complete Noise, destroy the pairing secret, and enter authenticated explicit
     /// confirmation. If Noise is not complete, the failure returns ownership
     /// of the still-live offer for a later candidate attempt.
     ///
@@ -172,7 +172,7 @@ impl PairingHandshake {
     }
 }
 
-/// An unauthenticated candidate failure that returns the active QR offer.
+/// An unauthenticated candidate failure that returns the active pairing offer.
 ///
 /// The offer is intentionally not printable or clonable. Recover it with
 /// [`Self::into_parts`] before beginning a replacement candidate attempt.

@@ -1,7 +1,7 @@
 protocol: RAPP
 document_version: "26.9.4.181"
 supersedes: "26.8.17.233"
-wire_version: "26.8"
+wire_version: "26.9"
 status: external-review
 
 semantics:
@@ -70,8 +70,8 @@ actions:
   generate_offer_id: "create a random 32-byte offer identifier"
   generate_pairing_secret: "create the random 32-byte bearer secret"
   start_offer_expiry: "start the monotonic offer expiry, clamped to offer_ttl_max_ms"
-  display_qr: "render the offer QR on the requester"
-  hide_qr: "remove the offer QR from display"
+  display_pairing_code: "display the 6-digit pairing code on the requester"
+  hide_pairing_code: "remove the pairing code from display"
   select_one_candidate: "choose exactly one offered transport candidate"
   connect_candidate: "open the selected candidate transport"
   prepare_pairing_responder: "arm the pairing handshake in the responder role"
@@ -195,7 +195,7 @@ pairing:
       role: requester
       guard: user_initiated
       to: offer_active
-      actions: [generate_offer_id, generate_pairing_secret, start_offer_expiry, display_qr]
+      actions: [generate_offer_id, generate_pairing_secret, start_offer_expiry, display_pairing_code]
     - from: unpaired
       event: offer_scanned
       role: proxy
@@ -212,13 +212,13 @@ pairing:
       event: offer_expired_or_cancelled
       role: requester
       to: unpaired
-      actions: [destroy_pairing_secret, invalidate_offer, hide_qr]
+      actions: [destroy_pairing_secret, invalidate_offer, hide_pairing_code]
     - from: handshaking
       event: handshake_authenticated
       role: both
       guard: transcript_matches
       to: confirming
-      actions: [derive_channel_identifiers, destroy_pairing_secret, stop_accepting_candidates, hide_qr, send_pairing_hello, show_peer_and_requested_grants]
+      actions: [derive_channel_identifiers, destroy_pairing_secret, stop_accepting_candidates, hide_pairing_code, send_pairing_hello, show_peer_and_requested_grants]
     - from: handshaking
       event: handshake_failed
       role: requester
