@@ -349,22 +349,22 @@ pub trait PinManageOps: PinOps {
         let pin1 = match scheme {
             crate::activation::ActivationScheme::PresetActivationPin => {
                 let record = self.read_pin_change_record(PinSlot::Pin1)?;
-                !matches!(record, crate::activation::PinChangeRecord::Changed)
+                matches!(record, crate::activation::PinChangeRecord::Unchanged)
             }
             crate::activation::ActivationScheme::ActivationCodeIsPuk => {
                 let status = self.pin_status(PinSlot::Pin1)?;
-                matches!(status, PinStatus::NoInfo | PinStatus::Other(_))
+                matches!(status, PinStatus::Locked)
             }
         };
 
         let pin2 = match scheme {
             crate::activation::ActivationScheme::PresetActivationPin => {
                 let record = self.read_pin_change_record(PinSlot::Pin2)?;
-                !matches!(record, crate::activation::PinChangeRecord::Changed)
+                matches!(record, crate::activation::PinChangeRecord::Unchanged)
             }
             crate::activation::ActivationScheme::ActivationCodeIsPuk => {
                 let status = self.pin_status(PinSlot::Pin2)?;
-                matches!(status, PinStatus::NoInfo | PinStatus::Other(_))
+                matches!(status, PinStatus::Locked)
             }
         };
 
@@ -497,6 +497,7 @@ pub trait PinManageOps: PinOps {
             pin2_status,
             puk_status,
             pin_reference_scheme: ref_scheme,
+            activation_scheme,
             activation_needs,
         })
     }
