@@ -204,6 +204,8 @@ pub struct CredentialHealthReport {
     pub puk_status: PinStatus,
     /// Resolved credential numbering scheme.
     pub pin_reference_scheme: PinReferenceScheme,
+    /// Activation scheme if evaluated.
+    pub activation_scheme: Option<ActivationScheme>,
     /// Activation needs if evaluated.
     pub activation_needs: Option<CardActivationNeeds>,
 }
