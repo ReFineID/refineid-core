@@ -1,0 +1,400 @@
+// Copyright 2026 Petri Koistinen
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Card activation and PIN change records (FINEID S4-1 section 4.6).
+//!
+//! Evaluates whether a card requires activation and performs the initial
+//! PIN configuration. Cards issued before 13 January 2026 use the PUK as
+//! an activation code to unblock both PINs (section 4.6.1). Cards issued
+//! from that date ship with both PINs set to a single-use 7-digit preset
+//! activation PIN and require changing both PINs (section 4.6.2).
+
+use core::fmt;
+
+use refineid_apdu::{ApduClass, CardTransport, CommandApdu, CommandHeader, PinRetries, StatusWord};
+use zeroize::ZeroizeOnDrop;
+
+use crate::credentials::{CredentialInputError, CredentialRole, SecretDigits, UnvalidatedSecret};
+use crate::manage::ManageOutcome;
+use crate::verify::{
+    AuthError, PIN1_REFERENCE, PIN2_REFERENCE, PUK_REFERENCE, PinReferenceScheme, PinSlot,
+    PinStatus,
+};
+
+/// GET DATA instruction byte (ISO 7816-4; FINEID S1 v4.2 section 3.15).
+const GET_DATA_INS: u8 = 0xCA;
+/// GET DATA P1 for PIN container query (FINEID S1 v4.2 section 3.15.2).
+const GET_DATA_P1: u8 = 0x00;
+/// GET DATA P2 for PIN container query (FINEID S1 v4.2 section 3.15.2).
+const GET_DATA_P2: u8 = 0xFF;
+/// Expected response length (Le) for GET DATA.
+const GET_DATA_LE: u8 = 0x00;
+
+/// Constructed template tag in PIN container request (FINEID S1 v4.2 section 3.15.2).
+const PIN_CONTAINER_TEMPLATE_TAG: u8 = 0xA0;
+/// Template length in PIN container request.
+const PIN_CONTAINER_TEMPLATE_LEN: u8 = 3;
+/// PIN reference tag inside request template.
+const PIN_CONTAINER_REF_TAG: u8 = 0x83;
+/// PIN reference value length.
+const PIN_CONTAINER_REF_LEN: u8 = 1;
+
+/// High byte of PIN changed tag (DF 2F, FINEID S1 v4.2 section 3.15.3).
+const PIN_CHANGED_TAG_HIGH: u8 = 0xDF;
+/// Low byte of PIN changed tag (DF 2F, FINEID S1 v4.2 section 3.15.3).
+const PIN_CHANGED_TAG_LOW: u8 = 0x2F;
+/// Value length for PIN changed tag.
+const PIN_CHANGED_LEN: u8 = 1;
+/// PIN changed window length in bytes: 2 tag bytes, 1 len byte, 1 flag byte.
+const PIN_CHANGED_WINDOW_LEN: usize = 4;
+/// Offset of flag byte in PIN changed window.
+const PIN_CHANGED_FLAG_OFFSET: usize = 3;
+/// Flag indicating PIN has not been changed since manufacture.
+const PIN_CHANGED_FLAG_UNCHANGED: u8 = 0x00;
+/// Flag indicating PIN has been changed since manufacture.
+const PIN_CHANGED_FLAG_CHANGED: u8 = 0x01;
+
+/// High byte of PIN attributes tag (DF 21, FINEID S1 v4.2 section 3.15.3).
+const PIN_ATTRIBUTES_TAG_HIGH: u8 = 0xDF;
+/// Low byte of PIN attributes tag (DF 21, FINEID S1 v4.2 section 3.15.3).
+const PIN_ATTRIBUTES_TAG_LOW: u8 = 0x21;
+/// Value length for PIN attributes tag.
+const PIN_ATTRIBUTES_LEN: u8 = 4;
+/// Window length for PIN attributes tag in bytes: 2 tag bytes, 1 len byte, 4 data bytes.
+const PIN_ATTRIBUTES_WINDOW_LEN: usize = 7;
+/// Offset of tries remaining byte in PIN attributes window.
+const PIN_ATTRIBUTES_TRIES_OFFSET: usize = 3;
+
+/// Length byte offset in a two-byte tag TLV window.
+const TLV_LENGTH_OFFSET: usize = 2;
+
+/// DVV cutover epoch seconds: 13 January 2026 00:00:00 UTC (FINEID S4-1 section 4.6).
+const DVV_PRESET_PIN_CUTOVER_EPOCH_SECONDS: i64 = 1_768_262_400;
+
+/// Number of digits for the preset activation PIN under FINEID S4-1 section 4.6.2.
+const PRESET_ACTIVATION_PIN_DIGIT_COUNT: usize = 7;
+/// Number of digits for the activation code (PUK) under FINEID S4-1 section 4.6.1.
+const ACTIVATION_CODE_PUK_DIGIT_COUNT: usize = 8;
+
+/// How a card is activated, decided by its issuance generation (FINEID S4-1 section 4.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationScheme {
+    /// Section 4.6.1, issued before 13 January 2026: RSA citizen certificates,
+    /// PINs ship blocked, the activation code is the 8-digit PUK.
+    ActivationCodeIsPuk,
+    /// Section 4.6.2, issued from 13 January 2026: ECC citizen certificates,
+    /// PINs ship set to the single-use 7-digit activation PIN.
+    PresetActivationPin,
+}
+
+impl ActivationScheme {
+    /// Classify activation scheme by the authentication certificate's notBefore date.
+    #[must_use]
+    pub const fn from_validity_start(not_before_epoch_seconds: i64) -> Self {
+        if not_before_epoch_seconds >= DVV_PRESET_PIN_CUTOVER_EPOCH_SECONDS {
+            Self::PresetActivationPin
+        } else {
+            Self::ActivationCodeIsPuk
+        }
+    }
+
+    /// The exact digit count the card accepts for the activation entry.
+    #[must_use]
+    pub const fn activation_entry_digit_count(self) -> usize {
+        match self {
+            Self::ActivationCodeIsPuk => ACTIVATION_CODE_PUK_DIGIT_COUNT,
+            Self::PresetActivationPin => PRESET_ACTIVATION_PIN_DIGIT_COUNT,
+        }
+    }
+}
+
+/// What the PIN container reports about whether a PIN was changed since manufacture
+/// (FINEID S1 v4.2 section 3.15.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinChangeRecord {
+    /// Changed at least once since manufacture.
+    Changed,
+    /// Never changed: factory state under the preset-PIN scheme.
+    Unchanged,
+    /// Absent or carrying an unrecognised flag value.
+    Unreadable,
+}
+
+/// Which citizen-card PINs still await factory activation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CardActivationNeeds {
+    /// Whether PIN1 still awaits its initial holder value.
+    pub pin1: bool,
+    /// Whether PIN2 still awaits its initial holder value.
+    pub pin2: bool,
+}
+
+impl CardActivationNeeds {
+    /// Whether the card has any activation work remaining.
+    #[must_use]
+    pub const fn any(&self) -> bool {
+        self.pin1 || self.pin2
+    }
+}
+
+/// A validated activation code or preset activation PIN.
+///
+/// Ensures the entered digits strictly match the scheme-specific digit count
+/// (7 digits for preset PIN, 8 digits for PUK) and zeroizes on drop.
+#[derive(ZeroizeOnDrop)]
+pub struct ActivationCode(SecretDigits);
+
+impl ActivationCode {
+    /// Reconstruct an activation code from unvalidated secret bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CredentialInputError`] if the length does not match the
+    /// expected digit count for `scheme` or contains non-digits.
+    pub fn reconstruct(
+        input: UnvalidatedSecret,
+        scheme: ActivationScheme,
+    ) -> Result<Self, CredentialInputError> {
+        let count = scheme.activation_entry_digit_count();
+        SecretDigits::reconstruct(input, CredentialRole::ActivationCode, count, count).map(Self)
+    }
+
+    /// Borrow validated secret digits for credential commands.
+    pub(crate) fn digits(&self) -> &[u8] {
+        self.0.secret_bytes()
+    }
+}
+
+impl fmt::Debug for ActivationCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ActivationCode([redacted])")
+    }
+}
+
+/// Outcome of one card activation execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivationReport {
+    /// The scheme under which activation was executed.
+    pub scheme: ActivationScheme,
+    /// Outcome of activating PIN1, or `None` if skipped.
+    pub pin1: Option<ManageOutcome>,
+    /// Outcome of activating PIN2, or `None` if skipped.
+    pub pin2: Option<ManageOutcome>,
+}
+
+/// Overall credential status and health summary for UI display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CredentialHealthReport {
+    /// Counter-safe status for PIN1.
+    pub pin1_status: PinStatus,
+    /// Counter-safe status for PIN2.
+    pub pin2_status: PinStatus,
+    /// PUK status (attempts remaining, locked, or no information).
+    pub puk_status: PinStatus,
+    /// Resolved credential numbering scheme.
+    pub pin_reference_scheme: PinReferenceScheme,
+    /// Activation needs if evaluated.
+    pub activation_needs: Option<CardActivationNeeds>,
+}
+
+/// Read a PIN's changed-since-manufacture record from the card's PIN container.
+///
+/// # Errors
+///
+/// Returns [`AuthError`] on transport failure or state transition.
+pub fn read_pin_change_record<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    slot: PinSlot,
+) -> Result<PinChangeRecord, AuthError<T::Error>> {
+    let reference = match slot {
+        PinSlot::Pin1 => PIN1_REFERENCE,
+        PinSlot::Pin2 => PIN2_REFERENCE,
+    };
+    let header = CommandHeader {
+        class: ApduClass::Plain,
+        instruction: GET_DATA_INS,
+        p1: GET_DATA_P1,
+        p2: GET_DATA_P2,
+    };
+    let data = [
+        PIN_CONTAINER_TEMPLATE_TAG,
+        PIN_CONTAINER_TEMPLATE_LEN,
+        PIN_CONTAINER_REF_TAG,
+        PIN_CONTAINER_REF_LEN,
+        reference,
+    ];
+    let apdu = match CommandApdu::case_4(header, &data, GET_DATA_LE) {
+        Ok(cmd) => cmd,
+        Err(_) => return Ok(PinChangeRecord::Unreadable),
+    };
+    let outcome = transport.transmit(&apdu).map_err(AuthError::Transport)?;
+    let response = outcome.into_response().map_err(AuthError::Outcome)?;
+    if response.status_word() != StatusWord::Success {
+        return Ok(PinChangeRecord::Unreadable);
+    }
+    let body = &response.body;
+    if body.len() < PIN_CHANGED_WINDOW_LEN {
+        return Ok(PinChangeRecord::Unreadable);
+    }
+    for start in 0..=body.len() - PIN_CHANGED_WINDOW_LEN {
+        if body[start] == PIN_CHANGED_TAG_HIGH
+            && body[start + 1] == PIN_CHANGED_TAG_LOW
+            && body[start + TLV_LENGTH_OFFSET] == PIN_CHANGED_LEN
+        {
+            return Ok(match body[start + PIN_CHANGED_FLAG_OFFSET] {
+                PIN_CHANGED_FLAG_UNCHANGED => PinChangeRecord::Unchanged,
+                PIN_CHANGED_FLAG_CHANGED => PinChangeRecord::Changed,
+                _ => PinChangeRecord::Unreadable,
+            });
+        }
+    }
+    Ok(PinChangeRecord::Unreadable)
+}
+
+/// Read the PUK retry counter from the citizen card's PIN container.
+///
+/// # Errors
+///
+/// Returns [`AuthError`] on transport failure or state transition.
+pub fn read_puk_status_from_container<T: CardTransport + ?Sized>(
+    transport: &mut T,
+) -> Result<PinStatus, AuthError<T::Error>> {
+    let header = CommandHeader {
+        class: ApduClass::Plain,
+        instruction: GET_DATA_INS,
+        p1: GET_DATA_P1,
+        p2: GET_DATA_P2,
+    };
+    let data = [
+        PIN_CONTAINER_TEMPLATE_TAG,
+        PIN_CONTAINER_TEMPLATE_LEN,
+        PIN_CONTAINER_REF_TAG,
+        PIN_CONTAINER_REF_LEN,
+        PUK_REFERENCE,
+    ];
+    let apdu = match CommandApdu::case_4(header, &data, GET_DATA_LE) {
+        Ok(cmd) => cmd,
+        Err(_) => return Ok(PinStatus::NoInfo),
+    };
+    let outcome = transport.transmit(&apdu).map_err(AuthError::Transport)?;
+    let response = outcome.into_response().map_err(AuthError::Outcome)?;
+    match response.status_word() {
+        StatusWord::Success => {
+            let body = &response.body;
+            if body.len() >= PIN_ATTRIBUTES_WINDOW_LEN {
+                for start in 0..=body.len() - PIN_ATTRIBUTES_WINDOW_LEN {
+                    if body[start] == PIN_ATTRIBUTES_TAG_HIGH
+                        && body[start + 1] == PIN_ATTRIBUTES_TAG_LOW
+                        && body[start + TLV_LENGTH_OFFSET] == PIN_ATTRIBUTES_LEN
+                    {
+                        let tries = body[start + PIN_ATTRIBUTES_TRIES_OFFSET];
+                        if let Some(retries) = PinRetries::from_nibble(tries) {
+                            return Ok(PinStatus::Remaining(retries));
+                        }
+                    }
+                }
+            }
+            Ok(PinStatus::NoInfo)
+        }
+        StatusWord::AuthenticationBlocked | StatusWord::ReferenceDataInvalidated => {
+            Ok(PinStatus::Locked)
+        }
+        other => Ok(PinStatus::Other(other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ActivationCode, ActivationScheme, CardActivationNeeds,
+        DVV_PRESET_PIN_CUTOVER_EPOCH_SECONDS, UnvalidatedSecret,
+    };
+
+    const CUTOVER_BEFORE: i64 = 1_700_000_000;
+    const CUTOVER_AFTER: i64 = 1_800_000_000;
+    const EXACT_7_DIGITS: &[u8] = b"1234567";
+    const EXACT_8_DIGITS: &[u8] = b"12345678";
+    const SIX_DIGITS: &[u8] = b"123456";
+
+    fn input(bytes: &[u8]) -> UnvalidatedSecret {
+        UnvalidatedSecret::from_owned_bytes(bytes.to_vec())
+    }
+
+    #[test]
+    fn scheme_resolution_follows_cutover() {
+        assert_eq!(
+            ActivationScheme::from_validity_start(CUTOVER_BEFORE),
+            ActivationScheme::ActivationCodeIsPuk
+        );
+        assert_eq!(
+            ActivationScheme::from_validity_start(DVV_PRESET_PIN_CUTOVER_EPOCH_SECONDS),
+            ActivationScheme::PresetActivationPin
+        );
+        assert_eq!(
+            ActivationScheme::from_validity_start(CUTOVER_AFTER),
+            ActivationScheme::PresetActivationPin
+        );
+    }
+
+    #[test]
+    fn activation_code_validation_enforces_scheme_lengths() {
+        assert!(
+            ActivationCode::reconstruct(
+                input(EXACT_7_DIGITS),
+                ActivationScheme::PresetActivationPin
+            )
+            .is_ok()
+        );
+        assert!(
+            ActivationCode::reconstruct(
+                input(EXACT_8_DIGITS),
+                ActivationScheme::PresetActivationPin
+            )
+            .is_err()
+        );
+        assert!(
+            ActivationCode::reconstruct(input(SIX_DIGITS), ActivationScheme::PresetActivationPin)
+                .is_err()
+        );
+
+        assert!(
+            ActivationCode::reconstruct(
+                input(EXACT_8_DIGITS),
+                ActivationScheme::ActivationCodeIsPuk
+            )
+            .is_ok()
+        );
+        assert!(
+            ActivationCode::reconstruct(
+                input(EXACT_7_DIGITS),
+                ActivationScheme::ActivationCodeIsPuk
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn activation_needs_reports_correctly() {
+        let needs = CardActivationNeeds {
+            pin1: true,
+            pin2: false,
+        };
+        assert!(needs.any());
+        let none = CardActivationNeeds {
+            pin1: false,
+            pin2: false,
+        };
+        assert!(!none.any());
+    }
+}

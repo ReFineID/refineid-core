@@ -77,6 +77,8 @@ pub enum CredentialRole {
     /// setting a new value. It never authorises an operation, and it
     /// spends its own counter.
     Puk,
+    /// Activation code or preset activation PIN (FINEID S4-1 section 4.6).
+    ActivationCode,
 }
 
 impl fmt::Display for CredentialRole {
@@ -85,6 +87,7 @@ impl fmt::Display for CredentialRole {
             Self::Pin1 => f.write_str("PIN1"),
             Self::Pin2 => f.write_str("PIN2"),
             Self::Puk => f.write_str("PUK"),
+            Self::ActivationCode => f.write_str("ActivationCode"),
         }
     }
 }
@@ -121,13 +124,13 @@ pub enum CredentialInputError {
 }
 
 #[derive(Zeroize)]
-struct SecretDigits {
+pub(crate) struct SecretDigits {
     bytes: [u8; PIN_MAX_LENGTH],
     length: u8,
 }
 
 impl SecretDigits {
-    fn reconstruct(
+    pub(crate) fn reconstruct(
         input: UnvalidatedSecret,
         role: CredentialRole,
         minimum: usize,
@@ -167,11 +170,11 @@ impl SecretDigits {
         })
     }
 
-    const fn digit_count(&self) -> usize {
+    pub(crate) const fn digit_count(&self) -> usize {
         self.length as usize
     }
 
-    fn secret_bytes(&self) -> &[u8] {
+    pub(crate) fn secret_bytes(&self) -> &[u8] {
         &self.bytes[..self.digit_count()]
     }
 }

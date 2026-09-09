@@ -35,7 +35,8 @@ use refineid_apdu::{ApduClass, CardTransport, CommandHeader, PinRetries, StatusW
 
 use crate::credentials::{Pin1, Pin2, Puk};
 use crate::verify::{
-    AuthError, PinOps, PinReferenceScheme, PinSlot, VERIFY_INS, VERIFY_P1, credential_exchange,
+    AuthError, PinOps, PinReferenceScheme, PinSlot, PinStatus, VERIFY_INS, VERIFY_P1,
+    credential_exchange,
 };
 
 /// CHANGE REFERENCE DATA instruction (ISO 7816-8; FINEID S1 v4.2
@@ -96,7 +97,7 @@ pub const fn classify_manage_sw(sw: StatusWord) -> ManageOutcome {
 
 /// Send one CHANGE REFERENCE DATA for `slot`: the current credential
 /// block, then the new.
-fn change<T: CardTransport + ?Sized>(
+pub(crate) fn change<T: CardTransport + ?Sized>(
     transport: &mut T,
     scheme: PinReferenceScheme,
     slot: PinSlot,
@@ -120,7 +121,7 @@ fn change<T: CardTransport + ?Sized>(
 /// object first, and only an accepted PUK lets the reset -- carrying only
 /// the new PIN -- go out; a refused PUK ends the flow with its own
 /// outcome and the reset is never sent.
-fn unblock<T: CardTransport + ?Sized>(
+pub(crate) fn unblock<T: CardTransport + ?Sized>(
     transport: &mut T,
     scheme: PinReferenceScheme,
     slot: PinSlot,
@@ -316,6 +317,188 @@ pub trait PinManageOps: PinOps {
         Self: Sized,
     {
         unblock(self, scheme, PinSlot::Pin2, puk.digits(), new.digits())
+    }
+
+    /// Read a PIN's changed-since-manufacture record.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn read_pin_change_record(
+        &mut self,
+        slot: PinSlot,
+    ) -> Result<crate::activation::PinChangeRecord, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        crate::activation::read_pin_change_record(self, slot)
+    }
+
+    /// Evaluate which PINs still require activation under `scheme`.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn activation_needs(
+        &mut self,
+        scheme: crate::activation::ActivationScheme,
+    ) -> Result<crate::activation::CardActivationNeeds, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let pin1 = match scheme {
+            crate::activation::ActivationScheme::PresetActivationPin => {
+                let record = self.read_pin_change_record(PinSlot::Pin1)?;
+                !matches!(record, crate::activation::PinChangeRecord::Changed)
+            }
+            crate::activation::ActivationScheme::ActivationCodeIsPuk => {
+                let status = self.pin_status(PinSlot::Pin1)?;
+                matches!(status, PinStatus::NoInfo | PinStatus::Other(_))
+            }
+        };
+
+        let pin2 = match scheme {
+            crate::activation::ActivationScheme::PresetActivationPin => {
+                let record = self.read_pin_change_record(PinSlot::Pin2)?;
+                !matches!(record, crate::activation::PinChangeRecord::Changed)
+            }
+            crate::activation::ActivationScheme::ActivationCodeIsPuk => {
+                let status = self.pin_status(PinSlot::Pin2)?;
+                matches!(status, PinStatus::NoInfo | PinStatus::Other(_))
+            }
+        };
+
+        Ok(crate::activation::CardActivationNeeds { pin1, pin2 })
+    }
+
+    /// Probe the PUK retry status without side effects.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn probe_puk_status(&mut self) -> Result<PinStatus, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let scheme = self.resolve_pin_reference_scheme()?;
+        match scheme {
+            PinReferenceScheme::Citizen => crate::activation::read_puk_status_from_container(self),
+            PinReferenceScheme::Organizational => {
+                let command = refineid_apdu::CommandApdu::case_1(CommandHeader {
+                    class: ApduClass::Plain,
+                    instruction: VERIFY_INS,
+                    p1: VERIFY_P1,
+                    p2: scheme.puk_reference(),
+                });
+                let outcome = self.transmit(&command).map_err(AuthError::Transport)?;
+                let response = outcome.into_response().map_err(AuthError::Outcome)?;
+                Ok(crate::verify::classify_pin_status_sw(
+                    response.status_word(),
+                ))
+            }
+        }
+    }
+
+    /// Activate a card awaiting activation under `scheme`.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn activate_card(
+        &mut self,
+        scheme: crate::activation::ActivationScheme,
+        code: crate::activation::ActivationCode,
+        new_pin1: Option<Pin1>,
+        new_pin2: Option<Pin2>,
+    ) -> Result<crate::activation::ActivationReport, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let ref_scheme = self.resolve_pin_reference_scheme()?;
+        let needs = self.activation_needs(scheme)?;
+        let mut report = crate::activation::ActivationReport {
+            scheme,
+            pin1: None,
+            pin2: None,
+        };
+
+        if needs.pin1
+            && let Some(fresh_pin1) = new_pin1
+        {
+            let outcome = match scheme {
+                crate::activation::ActivationScheme::PresetActivationPin => change(
+                    self,
+                    ref_scheme,
+                    PinSlot::Pin1,
+                    code.digits(),
+                    fresh_pin1.digits(),
+                )?,
+                crate::activation::ActivationScheme::ActivationCodeIsPuk => unblock(
+                    self,
+                    ref_scheme,
+                    PinSlot::Pin1,
+                    code.digits(),
+                    fresh_pin1.digits(),
+                )?,
+            };
+            report.pin1 = Some(outcome);
+            if outcome != ManageOutcome::Ok {
+                return Ok(report);
+            }
+        }
+
+        if needs.pin2
+            && let Some(fresh_pin2) = new_pin2
+        {
+            let outcome = match scheme {
+                crate::activation::ActivationScheme::PresetActivationPin => change(
+                    self,
+                    ref_scheme,
+                    PinSlot::Pin2,
+                    code.digits(),
+                    fresh_pin2.digits(),
+                )?,
+                crate::activation::ActivationScheme::ActivationCodeIsPuk => unblock(
+                    self,
+                    ref_scheme,
+                    PinSlot::Pin2,
+                    code.digits(),
+                    fresh_pin2.digits(),
+                )?,
+            };
+            report.pin2 = Some(outcome);
+        }
+
+        Ok(report)
+    }
+
+    /// Probe overall credential status and health summary for UI display.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn probe_credential_health(
+        &mut self,
+        activation_scheme: Option<crate::activation::ActivationScheme>,
+    ) -> Result<crate::activation::CredentialHealthReport, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let ref_scheme = self.resolve_pin_reference_scheme()?;
+        let pin1_status = self.pin_status_with_scheme(ref_scheme, PinSlot::Pin1)?;
+        let pin2_status = self.pin_status_with_scheme(ref_scheme, PinSlot::Pin2)?;
+        let puk_status = self.probe_puk_status()?;
+        let activation_needs = match activation_scheme {
+            Some(scheme) => Some(self.activation_needs(scheme)?),
+            None => None,
+        };
+        Ok(crate::activation::CredentialHealthReport {
+            pin1_status,
+            pin2_status,
+            puk_status,
+            pin_reference_scheme: ref_scheme,
+            activation_needs,
+        })
     }
 }
 
