@@ -26,4 +26,12 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 cargo run -q -p xtask -- check-magic-numbers
+"$root/scripts/verify-hygiene.sh"
+if command -v cargo-audit > /dev/null 2>&1; then
+    cargo audit
+fi
+git diff --exit-code --quiet || {
+    echo "pre-push: working tree has unstaged modifications"
+    exit 1
+}
 echo "pre-push gates passed"
