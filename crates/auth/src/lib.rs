@@ -21,11 +21,17 @@
 //! exactly once; the retry-risk policy maps the live counter to the
 //! safety floors different surfaces stop at.
 
+pub mod activation;
 pub mod credentials;
 pub mod manage;
 pub mod retry_risk;
 pub mod verify;
 
+pub use activation::{
+    ActivationCode, ActivationReport, ActivationScheme, CardActivationNeeds,
+    CredentialHealthReport, PinChangeRecord, read_pin_change_record,
+    read_puk_status_from_container,
+};
 pub use credentials::{
     CACHE_FINGERPRINT_KEY_LEN, CACHE_FINGERPRINT_LEN, CachedPin, CredentialInputError,
     CredentialRole, Pin1, Pin2, Puk, UnvalidatedSecret,
@@ -49,7 +55,7 @@ mod public_contract_tests {
     use serde::{Serialize, de::DeserializeOwned};
     use zeroize::{Zeroize, ZeroizeOnDrop};
 
-    use super::{Pin1, Pin2, Puk, UnvalidatedSecret};
+    use super::{ActivationCode, Pin1, Pin2, Puk, UnvalidatedSecret};
 
     trait AmbiguousIfImplemented<Disambiguator, Marker> {
         fn marker() {}
@@ -84,7 +90,15 @@ mod public_contract_tests {
         require_zeroize_on_drop::<Pin1>();
         require_zeroize_on_drop::<Pin2>();
         require_zeroize_on_drop::<Puk>();
+        require_zeroize_on_drop::<ActivationCode>();
         require_zeroizable_boundary::<UnvalidatedSecret>();
+
+        let _ = <ActivationCode as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <ActivationCode as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <ActivationCode as AmbiguousIfImplemented<_, ZeroizeMarker>>::marker;
+        let _ = <ActivationCode as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <ActivationCode as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+        let _ = <ActivationCode as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
 
         let _ = <Pin1 as AmbiguousIfImplemented<_, CloneMarker>>::marker;
         let _ = <Pin1 as AmbiguousIfImplemented<_, CopyMarker>>::marker;
