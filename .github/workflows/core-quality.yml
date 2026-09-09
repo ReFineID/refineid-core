@@ -48,3 +48,14 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --locked
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit dependencies for vulnerabilities
+        run: cargo audit
+
+      - name: Verify clean working tree
+        run: git diff --exit-code
