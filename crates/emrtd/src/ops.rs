@@ -86,6 +86,65 @@ pub trait EmrtdOps: CardTransport {
             security_object,
         })
     }
+
+    /// Selects the eMRTD application, reads the identification and biometric files
+    /// (EF.DG1 and EF.DG2), performs passive authentication against CSCA trust anchors
+    /// if provided (using EF.SOD), and returns an [`EmrtdCardProfile`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmrtdError`] if the transport fails or application selection is refused.
+    fn read_card_emrtd_profile(
+        &mut self,
+        anchors: Option<&crate::passive::CscaAnchors>,
+    ) -> Result<EmrtdCardProfile, EmrtdError<Self::Error>> {
+        self.select_emrtd_application()?;
+
+        let mut profile = EmrtdCardProfile {
+            document_number: None,
+            face_image: None,
+            passive_authentication_passed: None,
+        };
+
+        if let Ok(files) = self.read_passive_authentication_files() {
+            let mrz = ParsedMrzTd1::parse(files.mrz.as_bytes());
+            profile.document_number = mrz.map(|parsed| parsed.document_number);
+
+            if let Some(anchors) = anchors {
+                let verdict = crate::passive::authenticate_document(
+                    &files.security_object,
+                    &files.mrz,
+                    &files.face,
+                    anchors,
+                );
+                profile.passive_authentication_passed = Some(verdict.is_ok());
+            }
+
+            profile.face_image = parse_card_face_image(files.face.as_bytes());
+        } else {
+            if let Ok(Some(mrz)) = self.read_mrz_td1() {
+                profile.document_number = Some(mrz.document_number);
+            }
+            if let Ok(Some(face)) = self.read_face_image() {
+                profile.face_image = Some(face);
+            }
+        }
+
+        Ok(profile)
+    }
+}
+
+/// A high-level summary of the travel document files read from the card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmrtdCardProfile {
+    /// Document number parsed from EF.DG1.
+    pub document_number: Option<String>,
+    /// Parsed cardholder facial image from EF.DG2.
+    pub face_image: Option<CardFaceImage>,
+    /// Passive authentication verdict against installed CSCA anchors:
+    /// `Some(true)` if verified, `Some(false)` if signature/digest mismatch,
+    /// `None` if anchors were not provided or SOD was not evaluated.
+    pub passive_authentication_passed: Option<bool>,
 }
 
 impl<T: CardTransport + ?Sized> EmrtdOps for T {}

@@ -32,7 +32,7 @@ pub use applet::{EMRTD_AID_LEN, EMRTD_APPLET_AID, select_emrtd_application};
 pub use error::EmrtdError;
 pub use inventory::DataGroupInventory;
 pub use mrz::ParsedMrzTd1;
-pub use ops::EmrtdOps;
+pub use ops::{EmrtdCardProfile, EmrtdOps};
 pub use passive::{
     AuthenticatedDocument, CscaAnchor, CscaAnchors, EfDg1Bytes, EfDg2Bytes, EfSodBytes,
     PassiveAuthenticationError, PassiveAuthenticationFiles, authenticate_document,
