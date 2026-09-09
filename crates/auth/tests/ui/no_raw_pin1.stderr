@@ -1,0 +1,5 @@
+error[E0599]: no method named `as_bytes` found for struct `refineid_auth::Pin1` in the current scope
+ --> tests/ui/no_raw_pin1.rs:6:17
+  |
+6 |     let _ = pin.as_bytes();
+  |                 ^^^^^^^^ method not found in `refineid_auth::Pin1`

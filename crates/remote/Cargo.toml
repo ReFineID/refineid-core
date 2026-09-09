@@ -1,0 +1,20 @@
+[package]
+name = "refineid-remote"
+description = "Typed remote-operation vocabulary for the Remote Authorization Proxy Protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "refineid_remote"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+refineid-digest.workspace = true

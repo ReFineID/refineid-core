@@ -1,0 +1,116 @@
+// Copyright 2026 Petri Koistinen
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Reviewed FINEID PIN role types and verification.
+//!
+//! Values crossing a trust boundary are deconstructed, validated once, and
+//! reconstructed as types whose constructors preserve their invariants.
+//! The verification chain consumes a validated PIN through a
+//! crate-private path and ships it as a credential command, consumed
+//! exactly once; the retry-risk policy maps the live counter to the
+//! safety floors different surfaces stop at.
+
+pub mod credentials;
+pub mod manage;
+pub mod retry_risk;
+pub mod verify;
+
+pub use credentials::{
+    CACHE_FINGERPRINT_KEY_LEN, CACHE_FINGERPRINT_LEN, CachedPin, CredentialInputError,
+    CredentialRole, Pin1, Pin2, Puk, UnvalidatedSecret,
+};
+pub use manage::{ManageOutcome, PinManageOps, classify_manage_sw};
+pub use retry_risk::{
+    PinRetryRisk, pin1_status_permits_consumer_authentication, pin1_status_permits_reusable_cache,
+    pin2_status_permits_qualified_signature,
+};
+pub use verify::{
+    AuthError, ORGANIZATIONAL_PIN_MAX_LENGTH, PIN_STORED_LENGTH, PIN1_REFERENCE,
+    PIN1_REFERENCE_ORGANIZATIONAL, PIN2_REFERENCE, PIN2_REFERENCE_ORGANIZATIONAL, PUK_REFERENCE,
+    PUK_REFERENCE_ORGANIZATIONAL, PinOps, PinReferenceScheme, PinSlot, PinStatus, VerifyOutcome,
+    classify_pin_status_sw, classify_verify_sw,
+};
+
+#[cfg(test)]
+mod public_contract_tests {
+    use core::fmt::Display;
+
+    use serde::{Serialize, de::DeserializeOwned};
+    use zeroize::{Zeroize, ZeroizeOnDrop};
+
+    use super::{Pin1, Pin2, Puk, UnvalidatedSecret};
+
+    trait AmbiguousIfImplemented<Disambiguator, Marker> {
+        fn marker() {}
+    }
+
+    impl<T: ?Sized, Marker> AmbiguousIfImplemented<(), Marker> for T {}
+
+    struct CloneMarker;
+    impl<T: Clone> AmbiguousIfImplemented<bool, CloneMarker> for T {}
+
+    struct CopyMarker;
+    impl<T: Copy> AmbiguousIfImplemented<bool, CopyMarker> for T {}
+
+    struct ZeroizeMarker;
+    impl<T: ?Sized + Zeroize> AmbiguousIfImplemented<bool, ZeroizeMarker> for T {}
+
+    struct SerializeMarker;
+    impl<T: ?Sized + Serialize> AmbiguousIfImplemented<bool, SerializeMarker> for T {}
+
+    struct DeserializeMarker;
+    impl<T: DeserializeOwned> AmbiguousIfImplemented<bool, DeserializeMarker> for T {}
+
+    struct DisplayMarker;
+    impl<T: ?Sized + Display> AmbiguousIfImplemented<bool, DisplayMarker> for T {}
+
+    fn require_zeroize_on_drop<T: ZeroizeOnDrop>() {}
+
+    fn require_zeroizable_boundary<T: Zeroize + ZeroizeOnDrop>() {}
+
+    #[test]
+    fn sensitive_public_types_preserve_ownership_contracts() {
+        require_zeroize_on_drop::<Pin1>();
+        require_zeroize_on_drop::<Pin2>();
+        require_zeroize_on_drop::<Puk>();
+        require_zeroizable_boundary::<UnvalidatedSecret>();
+
+        let _ = <Pin1 as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <Pin1 as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <Pin1 as AmbiguousIfImplemented<_, ZeroizeMarker>>::marker;
+        let _ = <Pin1 as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <Pin1 as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+        let _ = <Pin1 as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
+
+        let _ = <Pin2 as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <Pin2 as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <Pin2 as AmbiguousIfImplemented<_, ZeroizeMarker>>::marker;
+        let _ = <Pin2 as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <Pin2 as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+        let _ = <Pin2 as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
+
+        let _ = <Puk as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, ZeroizeMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+        let _ = <Puk as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
+
+        let _ = <UnvalidatedSecret as AmbiguousIfImplemented<_, CloneMarker>>::marker;
+        let _ = <UnvalidatedSecret as AmbiguousIfImplemented<_, CopyMarker>>::marker;
+        let _ = <UnvalidatedSecret as AmbiguousIfImplemented<_, SerializeMarker>>::marker;
+        let _ = <UnvalidatedSecret as AmbiguousIfImplemented<_, DeserializeMarker>>::marker;
+        let _ = <UnvalidatedSecret as AmbiguousIfImplemented<_, DisplayMarker>>::marker;
+    }
+}

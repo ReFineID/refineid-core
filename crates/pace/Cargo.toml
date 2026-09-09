@@ -1,0 +1,32 @@
+[package]
+name = "refineid-pace"
+description = "PACE secure channel and Card Access Number type for FINEID cards"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]
+refineid-apdu.workspace = true
+refineid-ber.workspace = true
+aes.workspace = true
+cbc.workspace = true
+cmac.workspace = true
+crypto-bigint.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
+trybuild.workspace = true

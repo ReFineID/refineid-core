@@ -1,0 +1,109 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/apdu",
+    "crates/atr",
+    "crates/auth",
+    "crates/ber",
+    "crates/cms",
+    "crates/digest",
+    "crates/emrtd",
+    "crates/pace",
+    "crates/pcsc",
+    "crates/pin-cache",
+    "crates/pkcs11",
+    "crates/pkcs15",
+    "crates/rapp",
+    "crates/remote",
+    "crates/sign",
+    "crates/x509",
+    "tools/xtask",
+]
+# The cargo-fuzz harness builds with its own profile and nightly
+# toolchain, so it stays outside the workspace.
+exclude = ["crates/rapp/fuzz"]
+
+[workspace.package]
+version = "26.9.9"
+edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+authors = ["Petri Koistinen"]
+repository = "https://github.com/ReFineID/refineid-core"
+
+[workspace.dependencies]
+refineid-apdu = { path = "crates/apdu" }
+refineid-atr = { path = "crates/atr" }
+refineid-auth = { path = "crates/auth" }
+refineid-ber = { path = "crates/ber" }
+refineid-cms = { path = "crates/cms" }
+refineid-digest = { path = "crates/digest" }
+refineid-emrtd = { path = "crates/emrtd" }
+refineid-pcsc = { path = "crates/pcsc" }
+refineid-pin-cache = { path = "crates/pin-cache" }
+refineid-pkcs11 = { path = "crates/pkcs11" }
+refineid-pkcs15 = { path = "crates/pkcs15" }
+refineid-sign = { path = "crates/sign" }
+refineid-x509 = { path = "crates/x509" }
+pcsc = "2.9"
+aes = "0.9"
+cbc = "0.2"
+cmac = "0.8"
+crypto-bigint = { version = "0.7", features = ["alloc", "zeroize"] }
+getrandom = "0.4"
+hmac = "0.13"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+sha2 = "0.11"
+# Legacy signature-digest support for CMS verification only: older CSCA
+# self-signatures still use SHA-1 family algorithms.
+sha1 = "0.11"
+# Compile-time dotted-decimal OID parser for the cms `oid::known` table.
+const-oid = { version = "0.10", default-features = false }
+# Typed SubjectPublicKeyInfo parsing (re-exports `der`).
+spki = "0.8"
+# Typed X.509 Validity (notBefore/notAfter) decoding in cms::x509.
+x509-cert = { version = "0.3", default-features = false }
+# Test-fixture hex decoding.
+hex = "0.4"
+subtle = "2"
+rustc_lexer = "0.1"
+serde = "1"
+serde_json = "1"
+# Reads docs/protocols/rapp-state-machine-*.yaml in the model
+# conformance test; the rapp crate itself never parses YAML.
+serde_yaml = "0.9"
+# The Noise Protocol Framework handshakes and transport cipher for the
+# mandatory RAPP suite (crates/rapp); the protocol's security lives
+# here, transports are underlays. Default features drag the ring C
+# backend in through snow's std feature; the pure-Rust default resolver
+# is the only one in use, and the fixed-transcript corpus vectors prove
+# the trimmed build byte-identical.
+snow = { version = "0.10", default-features = false, features = ["default-resolver-crypto"] }
+# Swift/Kotlin bindings for the RAPP engine, behind the optional
+# `bindings` feature only; platform apps consume the staticlib.
+uniffi = "0.32"
+syn = { version = "2", features = ["full", "visit"] }
+trybuild = "1"
+walkdir = "2"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+
+[workspace.lints.rustdoc]
+bare_urls = "deny"
+broken_intra_doc_links = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+overflow-checks = true
+panic = "abort"
+strip = "symbols"

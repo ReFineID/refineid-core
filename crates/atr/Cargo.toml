@@ -1,0 +1,19 @@
+[package]
+name = "refineid-atr"
+description = "Typed ISO 7816-3 Answer-to-Reset (ATR) parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "refineid_atr"
+doctest = false
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Copyright 2026 Petri Koistinen. Licensed under the Apache License, Version 2.0.
+#
+# Mandatory pre-push gate; enabled per clone by scripts/install-hooks.sh.
+# Bypassing it (--no-verify or otherwise) is prohibited for every
+# contributor, human or AI agent alike.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+exec "$root/scripts/verify-push.sh"
