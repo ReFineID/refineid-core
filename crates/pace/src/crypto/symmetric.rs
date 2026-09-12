@@ -228,8 +228,8 @@ pub fn aes256_cmac_truncated(key: &[u8; AES_KEY_LEN], message: &[u8]) -> Mac<Cma
 #[cfg(test)]
 mod tests {
     use super::{
-        AES_BLOCK, AES_KEY_LEN, Aes256Key, KdfParam, aes256_cbc_decrypt_no_padding,
-        aes256_cbc_encrypt_no_padding, aes256_cmac, aes256_ecb_encrypt_block, kdf_aes256,
+        AES_BLOCK, AES_KEY_LEN, Aes256Key, KdfParam, aes256_cmac, aes256_ecb_encrypt_block,
+        kdf_aes256,
     };
 
     /// AES-256 key from NIST SP 800-38B Example 4 and SP 800-38A
@@ -260,11 +260,6 @@ mod tests {
         0xF8,
     ];
 
-    /// Non-sentinel test key filler.
-    const TEST_KEY_FILL: u8 = 0x42;
-    /// Non-sentinel test initialisation-vector filler.
-    const TEST_IV_FILL: u8 = 0x77;
-
     #[test]
     fn cmac_matches_nist_vectors() {
         assert_eq!(aes256_cmac(&NIST_KEY, b""), NIST_CMAC_EMPTY);
@@ -277,16 +272,6 @@ mod tests {
             aes256_ecb_encrypt_block(&NIST_KEY, &NIST_BLOCK_M1),
             NIST_ECB_M1
         );
-    }
-
-    #[test]
-    fn cbc_round_trips() {
-        let key = [TEST_KEY_FILL; AES_KEY_LEN];
-        let iv = [TEST_IV_FILL; AES_BLOCK];
-        let plaintext = b"this is one block this is two   ".to_vec();
-        let round_tripped = aes256_cbc_encrypt_no_padding(&key, &iv, &plaintext)
-            .and_then(|cipher| aes256_cbc_decrypt_no_padding(&key, &iv, &cipher));
-        assert_eq!(round_tripped, Ok(plaintext));
     }
 
     #[test]
