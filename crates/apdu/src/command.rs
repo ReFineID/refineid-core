@@ -322,6 +322,8 @@ pub enum CredentialBodyError {
     Empty,
     /// The credential data exceeds [`CREDENTIAL_BODY_MAX`] bytes.
     TooLong,
+    /// The assembled wire command exceeds [`CREDENTIAL_WIRE_MAX`] bytes.
+    WireTooLong,
 }
 
 impl fmt::Display for CredentialBodyError {
@@ -331,6 +333,10 @@ impl fmt::Display for CredentialBodyError {
             Self::TooLong => write!(
                 f,
                 "credential data exceeds the capacity of {CREDENTIAL_BODY_MAX} bytes"
+            ),
+            Self::WireTooLong => write!(
+                f,
+                "credential wire command exceeds the capacity of {CREDENTIAL_WIRE_MAX} bytes"
             ),
         }
     }
@@ -510,7 +516,7 @@ impl CredentialCommand {
     /// # Errors
     ///
     /// Returns [`CredentialBodyError::Empty`] when `body` is empty, or
-    /// [`CredentialBodyError::TooLong`] when the assembled wire exceeds
+    /// [`CredentialBodyError::WireTooLong`] when the assembled wire exceeds
     /// [`CREDENTIAL_WIRE_MAX`] bytes.
     pub fn from_protected_parts(
         header: CommandHeader,
@@ -520,14 +526,16 @@ impl CredentialCommand {
         if body.is_empty() {
             return Err(CredentialBodyError::Empty);
         }
-        let total = APDU_HEADER_LEN + LC_LEN + body.len() + LE_LEN;
-        if total > CREDENTIAL_WIRE_MAX {
-            return Err(CredentialBodyError::TooLong);
-        }
+        let total = APDU_HEADER_LEN
+            .checked_add(LC_LEN)
+            .and_then(|n| n.checked_add(body.len()))
+            .and_then(|n| n.checked_add(LE_LEN))
+            .filter(|&n| n <= CREDENTIAL_WIRE_MAX)
+            .ok_or(CredentialBodyError::WireTooLong)?;
         // The capacity guard above bounds both conversions; they are
         // fallible so no `as` cast can silently truncate the wire.
-        let lc = u8::try_from(body.len()).map_err(|_overflow| CredentialBodyError::TooLong)?;
-        let length = u8::try_from(total).map_err(|_overflow| CredentialBodyError::TooLong)?;
+        let lc = u8::try_from(body.len()).map_err(|_overflow| CredentialBodyError::WireTooLong)?;
+        let length = u8::try_from(total).map_err(|_overflow| CredentialBodyError::WireTooLong)?;
         let mut bytes = [0_u8; CREDENTIAL_WIRE_MAX];
         bytes[..APDU_HEADER_LEN].copy_from_slice(&header.to_bytes());
         bytes[APDU_HEADER_LEN] = lc;
@@ -861,19 +869,28 @@ mod tests {
         let over = vec![TEST_P1; CREDENTIAL_WIRE_MAX];
         assert!(matches!(
             CredentialCommand::from_protected_parts(header(), &over, TEST_LE),
-            Err(CredentialBodyError::TooLong)
+            Err(CredentialBodyError::WireTooLong)
         ));
     }
 
     #[test]
     fn credential_body_error_format_does_not_leak_candidate_length() {
-        let err = CredentialBodyError::TooLong;
-        let formatted = format!("{err}");
+        let empty = CredentialBodyError::Empty;
+        assert_eq!(format!("{empty}"), "credential data cannot be empty");
+        assert_eq!(format!("{empty:?}"), "Empty");
+
+        let too_long = CredentialBodyError::TooLong;
         assert_eq!(
-            formatted,
-            "credential data exceeds the capacity of 24 bytes"
+            format!("{too_long}"),
+            format!("credential data exceeds the capacity of {CREDENTIAL_BODY_MAX} bytes")
         );
-        let debug = format!("{err:?}");
-        assert_eq!(debug, "TooLong");
+        assert_eq!(format!("{too_long:?}"), "TooLong");
+
+        let wire_too_long = CredentialBodyError::WireTooLong;
+        assert_eq!(
+            format!("{wire_too_long}"),
+            format!("credential wire command exceeds the capacity of {CREDENTIAL_WIRE_MAX} bytes")
+        );
+        assert_eq!(format!("{wire_too_long:?}"), "WireTooLong");
     }
 }
