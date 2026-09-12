@@ -117,6 +117,15 @@ before and the correction made the core better.
   verified against a primary source -- the FINEID specifications, ISO,
   the RFCs -- not assumed from memory.
 
+## Worktree policy
+
+- All agent worktrees MUST live strictly under `~/src/wt/` (e.g., `~/src/wt/refineid-core-<topic>`).
+- Worktrees must NEVER be created loose beside repositories in `~/src/` or under `/tmp/`.
+- One task, one worktree, one branch (`agent/<topic>`), one pull request.
+- Every worktree must have a `WHATSUP.md` in its root recording its purpose, owner, heartbeat, and status (see [docs/process/agent-worktrees.md](docs/process/agent-worktrees.md)).
+- Run `scripts/agent-housekeeping.sh` to monitor worktrees and verify compliance.
+
 ## Working discipline
 
 - Never poll background commands or set rapid check timers (e.g. 10s-30s). When running builds, tests, or async tasks, execute asynchronously and wait strictly for system completion notifications.
+
