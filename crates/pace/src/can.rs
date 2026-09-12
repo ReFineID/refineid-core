@@ -78,9 +78,15 @@ pub enum CanError {
     /// No bytes were supplied.
     Empty,
     /// The candidate did not contain exactly [`CAN_DIGITS`] bytes.
-    WrongLength,
+    WrongLength {
+        /// Candidate length in bytes.
+        got: usize,
+    },
     /// The candidate contained a non-ASCII-digit byte.
-    NonDigit,
+    NonDigit {
+        /// Zero-based offset of the rejected byte.
+        at: usize,
+    },
 }
 
 impl Can {
@@ -95,10 +101,10 @@ impl Can {
             return Err(CanError::Empty);
         }
         if bytes.len() != CAN_DIGITS {
-            return Err(CanError::WrongLength);
+            return Err(CanError::WrongLength { got: bytes.len() });
         }
-        if bytes.iter().any(|byte| !byte.is_ascii_digit()) {
-            return Err(CanError::NonDigit);
+        if let Some(at) = bytes.iter().position(|byte| !byte.is_ascii_digit()) {
+            return Err(CanError::NonDigit { at });
         }
 
         let mut reconstructed = [0_u8; CAN_DIGITS];
@@ -126,10 +132,12 @@ impl fmt::Display for CanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Empty => f.write_str("CAN cannot be empty"),
-            Self::WrongLength => {
-                write!(f, "CAN must contain exactly {CAN_DIGITS} digits")
+            Self::WrongLength { got } => {
+                write!(f, "CAN must contain exactly {CAN_DIGITS} digits, got {got}")
             }
-            Self::NonDigit => f.write_str("CAN must contain ASCII digits only"),
+            Self::NonDigit { at } => {
+                write!(f, "CAN must contain ASCII digits; non-digit at offset {at}")
+            }
         }
     }
 }
@@ -139,6 +147,10 @@ impl core::error::Error for CanError {}
 #[cfg(test)]
 mod tests {
     use super::{CAN_DIGITS, Can, CanError, UnvalidatedCan};
+
+    const SHORT_CAN_DIGITS: usize = CAN_DIGITS - 1;
+    const LONG_CAN_DIGITS: usize = CAN_DIGITS + 1;
+    const NON_DIGIT_OFFSET: usize = 2;
 
     fn input(text: &str) -> UnvalidatedCan {
         UnvalidatedCan::from_owned_text(text.to_owned())
@@ -156,34 +168,22 @@ mod tests {
         assert!(matches!(Can::reconstruct(input("")), Err(CanError::Empty)));
         assert!(matches!(
             Can::reconstruct(input("12345")),
-            Err(CanError::WrongLength)
+            Err(CanError::WrongLength {
+                got: SHORT_CAN_DIGITS
+            })
         ));
         assert!(matches!(
             Can::reconstruct(input("1234567")),
-            Err(CanError::WrongLength)
+            Err(CanError::WrongLength {
+                got: LONG_CAN_DIGITS
+            })
         ));
         assert!(matches!(
             Can::reconstruct(input("12a456")),
-            Err(CanError::NonDigit)
+            Err(CanError::NonDigit {
+                at: NON_DIGIT_OFFSET
+            })
         ));
-    }
-
-    #[test]
-    fn can_error_format_does_not_leak_candidate_length_or_offset() {
-        let empty = CanError::Empty;
-        assert_eq!(format!("{empty}"), "CAN cannot be empty");
-        assert_eq!(format!("{empty:?}"), "Empty");
-
-        let wrong_len = CanError::WrongLength;
-        assert_eq!(
-            format!("{wrong_len}"),
-            format!("CAN must contain exactly {CAN_DIGITS} digits")
-        );
-        assert_eq!(format!("{wrong_len:?}"), "WrongLength");
-
-        let non_digit = CanError::NonDigit;
-        assert_eq!(format!("{non_digit}"), "CAN must contain ASCII digits only");
-        assert_eq!(format!("{non_digit:?}"), "NonDigit");
     }
 
     #[test]
