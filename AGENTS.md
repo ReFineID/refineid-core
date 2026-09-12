@@ -30,12 +30,12 @@ PIN codes (PIN1 and PIN2) NEVER leave the mobile phone when accessed via RAPP:
 - **PIN2 stays local**: PIN2 (qualified electronic signature) prompts appear exclusively on the mobile device's screen and are entered directly by the cardholder into the phone's protected UI.
 - **Host computer protected path**: The host computer and browsers never prompt for, receive, cache, or handle PIN codes when using remote readers (`CKF_PROTECTED_AUTHENTICATION_PATH`).
 
-## Rule #2: Zero PIN and PIN-length logging across all environments
+## Rule #2: Zero PIN data and candidate PIN-length logging across all environments
 
 Never log PIN codes (PIN1, PIN2), PUK, or CAN in any development, test, staging, or production context:
-- **Zero PIN logging**: Diagnostic macros (`diag!`), tracing, event logs, and error messages must never contain PIN bytes or role-identifying secrets.
-- **Zero PIN-length logging**: Never log or format PIN lengths or candidate digit counts (`got {len}`). Disclosing candidate lengths leaks entropy and reduces keyspace security.
-- **Errors**: Display implementations of credential/PIN errors must state expected boundaries without echoing candidate digit counts.
+- **Zero PIN data logging**: Diagnostic macros (`diag!`), tracing, event logs, and error messages must never contain PIN bytes, non-digit character bytes, character offsets, or role-identifying secrets.
+- **Zero candidate PIN-length logging**: Never log or format candidate PIN lengths or candidate digit counts. Disclosing candidate lengths leaks entropy and reduces keyspace security.
+- **Errors**: Display implementations of credential/PIN errors must state expected specification policy boundaries without echoing candidate digit counts or offsets.
 - **Debugging**: If specialized debugging is ever needed, it is done via temporary, uncommitted private test harnesses and removed immediately.
 
 ## Design before code
