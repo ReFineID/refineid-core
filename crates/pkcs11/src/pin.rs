@@ -40,12 +40,10 @@ impl PinBytes {
             return Err(error);
         }
         let Ok(length) = u8::try_from(bytes.len()) else {
-            let got = bytes.len();
             bytes.zeroize();
             return Err(PinRoleError::WrongLength {
                 expected_min: Self::MIN_LENGTH,
                 expected_max: Self::MAX_LENGTH,
-                got,
             });
         };
         let mut storage = [0_u8; Self::MAX_LENGTH];
@@ -99,7 +97,6 @@ impl<const N: usize> TryFrom<[u8; N]> for PinBytes {
             return Err(PinRoleError::WrongLength {
                 expected_min: Self::MIN_LENGTH,
                 expected_max: Self::MAX_LENGTH,
-                got: N,
             });
         };
         let mut storage = [0_u8; Self::MAX_LENGTH];
@@ -129,14 +126,9 @@ pub enum PinRoleError {
         expected_min: usize,
         /// Maximum accepted length in digits.
         expected_max: usize,
-        /// Number of digits actually supplied.
-        got: usize,
     },
     /// Candidate contained a non-ASCII-digit byte.
-    NonDigit {
-        /// 0-indexed byte offset of the non-digit.
-        at: usize,
-    },
+    NonDigit,
 }
 
 impl fmt::Display for PinRoleError {
@@ -146,12 +138,11 @@ impl fmt::Display for PinRoleError {
             Self::WrongLength {
                 expected_min,
                 expected_max,
-                got: _,
             } => write!(
                 f,
                 "PIN length outside expected range [{expected_min}, {expected_max}]"
             ),
-            Self::NonDigit { at } => write!(f, "PIN contains non-digit at offset {at}"),
+            Self::NonDigit => f.write_str("PIN must contain only ASCII digits"),
         }
     }
 }
@@ -166,13 +157,56 @@ fn validate_digits(bytes: &[u8], min: usize, max: usize) -> Result<(), PinRoleEr
         return Err(PinRoleError::WrongLength {
             expected_min: min,
             expected_max: max,
-            got: bytes.len(),
         });
     }
-    for (i, &b) in bytes.iter().enumerate() {
+    for &b in bytes {
         if !b.is_ascii_digit() {
-            return Err(PinRoleError::NonDigit { at: i });
+            return Err(PinRoleError::NonDigit);
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pin_role_error_debug_does_not_leak_candidate_length_or_offset() {
+        let err = validate_digits(b"12", PinBytes::MIN_LENGTH, PinBytes::MAX_LENGTH)
+            .expect_err("fixture is below minimum length");
+        let expected_debug = format!(
+            "WrongLength {{ expected_min: {}, expected_max: {} }}",
+            PinBytes::MIN_LENGTH,
+            PinBytes::MAX_LENGTH
+        );
+        assert_eq!(format!("{err:?}"), expected_debug);
+
+        let err_non_digit = validate_digits(b"12a4", PinBytes::MIN_LENGTH, PinBytes::MAX_LENGTH)
+            .expect_err("fixture contains a non-digit byte");
+        assert_eq!(format!("{err_non_digit:?}"), "NonDigit");
+    }
+
+    #[test]
+    fn pin_role_error_display_is_always_shape_only() {
+        let err_empty = validate_digits(b"", PinBytes::MIN_LENGTH, PinBytes::MAX_LENGTH)
+            .expect_err("fixture is empty");
+        assert_eq!(err_empty.to_string(), "PIN input is empty");
+
+        let err_wrong_len = validate_digits(b"12", PinBytes::MIN_LENGTH, PinBytes::MAX_LENGTH)
+            .expect_err("fixture is below minimum length");
+        let expected_wrong_len = format!(
+            "PIN length outside expected range [{}, {}]",
+            PinBytes::MIN_LENGTH,
+            PinBytes::MAX_LENGTH
+        );
+        assert_eq!(err_wrong_len.to_string(), expected_wrong_len);
+
+        let err_non_digit = validate_digits(b"12a4", PinBytes::MIN_LENGTH, PinBytes::MAX_LENGTH)
+            .expect_err("fixture contains a non-digit byte");
+        assert_eq!(
+            err_non_digit.to_string(),
+            "PIN must contain only ASCII digits"
+        );
+    }
 }
