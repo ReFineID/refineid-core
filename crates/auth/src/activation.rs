@@ -32,8 +32,9 @@ use crate::verify::{
     PinStatus,
 };
 
-/// GET DATA instruction byte (ISO 7816-4; FINEID S1 v4.2 section 3.15).
-const GET_DATA_INS: u8 = 0xCA;
+/// GET DATA instruction byte, odd variant carrying a command data field
+/// (ISO 7816-4:2020 section 11.4.2; FINEID S1 v4.2 section 3.15.2 Table 16).
+const GET_DATA_INS: u8 = 0xCB;
 /// GET DATA P1 for PIN container query (FINEID S1 v4.2 section 3.15.2).
 const GET_DATA_P1: u8 = 0x00;
 /// GET DATA P2 for PIN container query (FINEID S1 v4.2 section 3.15.2).
@@ -320,7 +321,15 @@ pub fn read_puk_status_from_container<T: CardTransport + ?Sized>(
 mod tests {
     use super::{
         ActivationCode, ActivationScheme, CardActivationNeeds,
-        DVV_PRESET_PIN_CUTOVER_EPOCH_SECONDS, UnvalidatedSecret,
+        DVV_PRESET_PIN_CUTOVER_EPOCH_SECONDS, PIN_ATTRIBUTES_LEN, PIN_ATTRIBUTES_TAG_HIGH,
+        PIN_ATTRIBUTES_TAG_LOW, PIN_CHANGED_FLAG_CHANGED, PIN_CHANGED_FLAG_UNCHANGED,
+        PIN_CHANGED_LEN, PIN_CHANGED_TAG_HIGH, PIN_CHANGED_TAG_LOW, PinChangeRecord,
+        read_pin_change_record, read_puk_status_from_container,
+    };
+    use crate::credentials::UnvalidatedSecret;
+    use crate::verify::{AuthError, PinSlot, PinStatus};
+    use refineid_apdu::{
+        CardTransport, CommandApdu, CredentialCommand, ResponseApdu, StatusWord, TransportOutcome,
     };
 
     const CUTOVER_BEFORE: i64 = 1_700_000_000;
@@ -398,5 +407,138 @@ mod tests {
             pin2: false,
         };
         assert!(!none.any());
+    }
+
+    struct MockTransport {
+        response: Result<ResponseApdu, String>,
+    }
+
+    impl MockTransport {
+        fn success(body: Vec<u8>) -> Self {
+            let [sw1, sw2] = StatusWord::Success.as_u16().to_be_bytes();
+            Self {
+                response: Ok(ResponseApdu { body, sw1, sw2 }),
+            }
+        }
+
+        fn sw(sw: StatusWord) -> Self {
+            let [sw1, sw2] = sw.as_u16().to_be_bytes();
+            Self {
+                response: Ok(ResponseApdu {
+                    body: vec![],
+                    sw1,
+                    sw2,
+                }),
+            }
+        }
+
+        fn error(err: &str) -> Self {
+            Self {
+                response: Err(err.to_owned()),
+            }
+        }
+    }
+
+    impl CardTransport for MockTransport {
+        type Error = String;
+
+        fn transmit(&mut self, _command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
+            match &self.response {
+                Ok(resp) => Ok(TransportOutcome::Response(resp.clone())),
+                Err(e) => Err(e.clone()),
+            }
+        }
+
+        fn transmit_credential(
+            &mut self,
+            _command: CredentialCommand,
+        ) -> Result<TransportOutcome, Self::Error> {
+            Err("credential transmit unused in activation tests".to_owned())
+        }
+    }
+
+    #[test]
+    fn read_pin_change_record_reports_unchanged_and_changed() {
+        let unchanged_body = vec![
+            PIN_CHANGED_TAG_HIGH,
+            PIN_CHANGED_TAG_LOW,
+            PIN_CHANGED_LEN,
+            PIN_CHANGED_FLAG_UNCHANGED,
+        ];
+        let mut t1 = MockTransport::success(unchanged_body);
+        let record = read_pin_change_record(&mut t1, PinSlot::Pin1).expect("clean read");
+        assert_eq!(record, PinChangeRecord::Unchanged);
+
+        let changed_body = vec![
+            PIN_CHANGED_TAG_HIGH,
+            PIN_CHANGED_TAG_LOW,
+            PIN_CHANGED_LEN,
+            PIN_CHANGED_FLAG_CHANGED,
+        ];
+        let mut t2 = MockTransport::success(changed_body);
+        let record = read_pin_change_record(&mut t2, PinSlot::Pin1).expect("clean read");
+        assert_eq!(record, PinChangeRecord::Changed);
+    }
+
+    #[test]
+    fn read_pin_change_record_handles_non_9000_as_unreadable() {
+        let mut t = MockTransport::sw(StatusWord::ReferenceDataNotFound);
+        let record = read_pin_change_record(&mut t, PinSlot::Pin1).expect("clean read");
+        assert_eq!(record, PinChangeRecord::Unreadable);
+    }
+
+    #[test]
+    fn read_pin_change_record_propagates_transport_error() {
+        let mut t = MockTransport::error("card removed");
+        let error = read_pin_change_record(&mut t, PinSlot::Pin1);
+        assert!(matches!(error, Err(AuthError::Transport(_))));
+    }
+
+    #[test]
+    fn read_puk_status_propagates_transport_error() {
+        let mut t = MockTransport::error("card removed");
+        let error = read_puk_status_from_container(&mut t);
+        assert!(matches!(error, Err(AuthError::Transport(_))));
+    }
+
+    #[test]
+    fn read_puk_status_handles_authentication_blocked_as_locked() {
+        let mut t1 = MockTransport::sw(StatusWord::AuthenticationBlocked);
+        let status = read_puk_status_from_container(&mut t1).expect("clean response");
+        assert_eq!(status, PinStatus::Locked);
+
+        let mut t2 = MockTransport::sw(StatusWord::ReferenceDataInvalidated);
+        let status = read_puk_status_from_container(&mut t2).expect("clean response");
+        assert_eq!(status, PinStatus::Locked);
+    }
+
+    #[test]
+    fn read_puk_status_handles_other_status_word() {
+        let mut t = MockTransport::sw(StatusWord::ReferenceDataNotFound);
+        let status = read_puk_status_from_container(&mut t).expect("clean response");
+        assert_eq!(status, PinStatus::Other(StatusWord::ReferenceDataNotFound));
+    }
+
+    #[test]
+    fn read_puk_status_handles_missing_or_corrupt_tlv_as_no_info() {
+        let mut t_empty = MockTransport::success(vec![]);
+        let status = read_puk_status_from_container(&mut t_empty).expect("clean response");
+        assert_eq!(status, PinStatus::NoInfo);
+
+        // Valid tag and length, but invalid retry count nibble exceeding 4 bits.
+        const OVERFLOW_NIBBLE: u8 = refineid_apdu::PinRetries::MAX + 1;
+        const TLV_FILL_BYTE: u8 = 0;
+        let corrupt_nibble = vec![
+            PIN_ATTRIBUTES_TAG_HIGH,
+            PIN_ATTRIBUTES_TAG_LOW,
+            PIN_ATTRIBUTES_LEN,
+            OVERFLOW_NIBBLE,
+            TLV_FILL_BYTE,
+            TLV_FILL_BYTE,
+            TLV_FILL_BYTE,
+        ];
+        let mut t_corrupt = MockTransport::success(corrupt_nibble);
+        let status = read_puk_status_from_container(&mut t_corrupt).expect("clean response");
+        assert_eq!(status, PinStatus::NoInfo);
     }
 }

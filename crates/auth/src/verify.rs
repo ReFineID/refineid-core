@@ -181,8 +181,6 @@ pub enum AuthError<E> {
     /// match; it is refused locally before any command, so no retry is
     /// spent learning it.
     LengthUnsupported {
-        /// The rejected length in digits.
-        got: usize,
         /// The maximum the card stores.
         max: usize,
     },
@@ -194,9 +192,9 @@ impl<E: core::fmt::Display> core::fmt::Display for AuthError<E> {
             Self::Transport(e) => write!(f, "auth transport: {e}"),
             Self::Outcome(outcome) => write!(f, "auth transport state: {outcome}"),
             Self::Command(e) => write!(f, "auth command: {e}"),
-            Self::LengthUnsupported { got, max } => write!(
+            Self::LengthUnsupported { max } => write!(
                 f,
-                "auth: a {got}-digit PIN exceeds the organizational card's {max}-digit maximum"
+                "auth: PIN length exceeds the organizational card's {max}-digit maximum"
             ),
         }
     }
@@ -291,7 +289,6 @@ pub(crate) fn credential_exchange<T: CardTransport + ?Sized>(
         for group in groups {
             if group.len() > ORGANIZATIONAL_PIN_MAX_LENGTH {
                 return Err(AuthError::LengthUnsupported {
-                    got: group.len(),
                     max: ORGANIZATIONAL_PIN_MAX_LENGTH,
                 });
             }
