@@ -32,7 +32,7 @@ PIN codes (PIN1 and PIN2) NEVER leave the mobile phone when accessed via RAPP:
 
 ## Rule #2: Zero PIN data and candidate PIN-length logging across all environments
 
-Never log PIN codes (PIN1, PIN2), PUK, or CAN in any development, test, staging, or production context:
+Never log PIN codes (PIN1, PIN2) or PUK in any development, test, staging, or production context:
 - **Zero PIN data logging**: Diagnostic macros (`diag!`), tracing, event logs, and error messages must never contain PIN bytes, non-digit character bytes, character offsets, or role-identifying secrets.
 - **Zero candidate PIN-length logging**: Never log or format candidate PIN lengths or candidate digit counts. Disclosing candidate lengths leaks entropy and reduces keyspace security.
 - **Errors**: Display implementations of credential/PIN errors must state expected specification policy boundaries without echoing candidate digit counts or offsets.
