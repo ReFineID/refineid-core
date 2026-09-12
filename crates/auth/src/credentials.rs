@@ -94,8 +94,8 @@ impl fmt::Display for CredentialRole {
 
 /// Structural reason that secret input was rejected.
 ///
-/// The error reports shape only. It never contains the rejected byte or any
-/// credential material.
+/// The error reports shape only. It never contains candidate lengths, byte
+/// offsets, rejected bytes, or any credential material.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CredentialInputError {
     /// No bytes were supplied.
@@ -111,15 +111,11 @@ pub enum CredentialInputError {
         expected_min: usize,
         /// Maximum accepted digit count.
         expected_max: usize,
-        /// Candidate digit count.
-        got: usize,
     },
     /// Candidate contained a non-ASCII-digit byte.
     NonDigit {
         /// Role that was being reconstructed.
         role: CredentialRole,
-        /// Offset of the rejected byte. The byte itself is not retained.
-        at: usize,
     },
 }
 
@@ -144,11 +140,10 @@ impl SecretDigits {
                 role,
                 expected_min: minimum,
                 expected_max: maximum,
-                got: input.bytes.len(),
             });
         }
-        if let Some(at) = input.bytes.iter().position(|byte| !byte.is_ascii_digit()) {
-            return Err(CredentialInputError::NonDigit { role, at });
+        if input.bytes.iter().any(|byte| !byte.is_ascii_digit()) {
+            return Err(CredentialInputError::NonDigit { role });
         }
         let length = match u8::try_from(input.bytes.len()) {
             Ok(length) => length,
@@ -157,7 +152,6 @@ impl SecretDigits {
                     role,
                     expected_min: minimum,
                     expected_max: maximum,
-                    got: input.bytes.len(),
                 });
             }
         };
@@ -421,17 +415,11 @@ impl fmt::Display for CredentialInputError {
                 role,
                 expected_min,
                 expected_max,
-                got: _,
             } => write!(
                 f,
                 "{role} must contain {expected_min}-{expected_max} digits"
             ),
-            Self::NonDigit { role, at } => {
-                write!(
-                    f,
-                    "{role} must contain ASCII digits; non-digit at offset {at}"
-                )
-            }
+            Self::NonDigit { role } => write!(f, "{role} must contain only ASCII digits"),
         }
     }
 }
@@ -445,8 +433,6 @@ mod tests {
         PUK_MAX_LENGTH, PUK_MIN_LENGTH, Pin1, Pin2, Puk, UnvalidatedSecret,
     };
     use zeroize::Zeroize;
-
-    const NON_DIGIT_OFFSET: usize = 2;
     const PIN1_TOO_SHORT_LENGTH: usize = PIN1_MIN_LENGTH - 1;
     const PIN2_TOO_SHORT_LENGTH: usize = PIN2_MIN_LENGTH - 1;
     const TOO_LONG_LENGTH: usize = PIN_MAX_LENGTH + 1;
@@ -488,7 +474,6 @@ mod tests {
                 role: CredentialRole::Pin2,
                 expected_min: PIN2_MIN_LENGTH,
                 expected_max: super::PIN_MAX_LENGTH,
-                got: PIN1_MIN_LENGTH,
             }
         );
     }
@@ -507,7 +492,6 @@ mod tests {
                 role: CredentialRole::Pin1,
                 expected_min: PIN1_MIN_LENGTH,
                 expected_max: PIN_MAX_LENGTH,
-                got: PIN1_TOO_SHORT_LENGTH,
             })
         ));
         assert!(Pin1::reconstruct(digits(PIN1_MIN_LENGTH)).is_ok());
@@ -518,14 +502,12 @@ mod tests {
                 role: CredentialRole::Pin1,
                 expected_min: PIN1_MIN_LENGTH,
                 expected_max: PIN_MAX_LENGTH,
-                got: TOO_LONG_LENGTH,
             })
         ));
         assert!(matches!(
             Pin1::reconstruct(non_ascii_digits(PIN1_MIN_LENGTH)),
             Err(CredentialInputError::NonDigit {
                 role: CredentialRole::Pin1,
-                ..
             })
         ));
     }
@@ -544,7 +526,6 @@ mod tests {
                 role: CredentialRole::Pin2,
                 expected_min: PIN2_MIN_LENGTH,
                 expected_max: PIN_MAX_LENGTH,
-                got: PIN2_TOO_SHORT_LENGTH,
             })
         ));
         assert!(Pin2::reconstruct(digits(PIN2_MIN_LENGTH)).is_ok());
@@ -555,14 +536,12 @@ mod tests {
                 role: CredentialRole::Pin2,
                 expected_min: PIN2_MIN_LENGTH,
                 expected_max: PIN_MAX_LENGTH,
-                got: TOO_LONG_LENGTH,
             })
         ));
         assert!(matches!(
             Pin2::reconstruct(non_ascii_digits(PIN2_MIN_LENGTH)),
             Err(CredentialInputError::NonDigit {
                 role: CredentialRole::Pin2,
-                ..
             })
         ));
     }
@@ -581,7 +560,6 @@ mod tests {
                 role: CredentialRole::Puk,
                 expected_min: PUK_MIN_LENGTH,
                 expected_max: PUK_MAX_LENGTH,
-                got: PUK_TOO_SHORT_LENGTH,
             })
         ));
         assert!(Puk::reconstruct(digits(PUK_MIN_LENGTH)).is_ok());
@@ -592,14 +570,12 @@ mod tests {
                 role: CredentialRole::Puk,
                 expected_min: PUK_MIN_LENGTH,
                 expected_max: PUK_MAX_LENGTH,
-                got: PUK_TOO_LONG_LENGTH,
             })
         ));
         assert!(matches!(
             Puk::reconstruct(non_ascii_digits(PUK_MIN_LENGTH)),
             Err(CredentialInputError::NonDigit {
                 role: CredentialRole::Puk,
-                ..
             })
         ));
         let puk = Puk::reconstruct(digits(PUK_MAX_LENGTH)).expect("valid PUK fixture");
@@ -615,7 +591,6 @@ mod tests {
             error,
             CredentialInputError::NonDigit {
                 role: CredentialRole::Pin1,
-                at: NON_DIGIT_OFFSET,
             }
         );
     }
@@ -630,6 +605,33 @@ mod tests {
 
         let pin2 = Pin2::reconstruct(input(b"123456")).expect("valid PIN2 fixture");
         assert_eq!(format!("{pin2:?}"), "Pin2([redacted])");
+
+        let wrong_len =
+            Pin1::reconstruct(input(b"12")).expect_err("fixture is below minimum length");
+        let expected_wrong_len = format!(
+            "WrongLength {{ role: Pin1, expected_min: {PIN1_MIN_LENGTH}, expected_max: {PIN_MAX_LENGTH} }}"
+        );
+        assert_eq!(format!("{wrong_len:?}"), expected_wrong_len);
+
+        let non_digit =
+            Pin1::reconstruct(input(b"12a4")).expect_err("fixture contains a non-digit byte");
+        assert_eq!(format!("{non_digit:?}"), "NonDigit { role: Pin1 }");
+    }
+
+    #[test]
+    fn display_is_always_shape_only() {
+        let empty = Pin1::reconstruct(input(b"")).expect_err("fixture is empty");
+        assert_eq!(empty.to_string(), "PIN1 cannot be empty");
+
+        let wrong_len =
+            Pin1::reconstruct(input(b"12")).expect_err("fixture is below minimum length");
+        let expected_wrong_len =
+            format!("PIN1 must contain {PIN1_MIN_LENGTH}-{PIN_MAX_LENGTH} digits");
+        assert_eq!(wrong_len.to_string(), expected_wrong_len);
+
+        let non_digit =
+            Pin1::reconstruct(input(b"12a4")).expect_err("fixture contains a non-digit byte");
+        assert_eq!(non_digit.to_string(), "PIN1 must contain only ASCII digits");
     }
 
     #[test]
