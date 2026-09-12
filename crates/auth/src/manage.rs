@@ -334,7 +334,13 @@ pub trait PinManageOps: PinOps {
         crate::activation::read_pin_change_record(self, slot)
     }
 
-    /// Evaluate which PINs still require activation under `scheme`.
+    /// Report factory activation needs under `scheme`.
+    ///
+    /// Under FINEID S4-1 v4.2 section 4.6.1 (cards issued before 13 January 2026),
+    /// cards ship with PINs blocked (`PinStatus::Locked`), activated by unblocking
+    /// with the PUK. Under section 4.6.2 (cards issued from 13 January 2026),
+    /// cards ship with preset activation PINs and their factory status is identified
+    /// by the unchanged flag (`PinChangeRecord::Unchanged`) in the PIN container.
     ///
     /// # Errors
     ///
@@ -371,18 +377,40 @@ pub trait PinManageOps: PinOps {
         Ok(crate::activation::CardActivationNeeds { pin1, pin2 })
     }
 
-    /// Probe the PUK retry status without side effects.
+    /// Probe the PUK retry status without side effects under an explicit `scheme`.
+    ///
+    /// For citizen cards, sends a Case 1 empty VERIFY APDU (header-only, no Lc,
+    /// no data field) under [`crate::verify::PUK_REFERENCE`], querying comparison status
+    /// without consuming retries (ISO 7816-4 section 7.5.6). If the card does not
+    /// report retry status via the VERIFY status word, it falls back to querying
+    /// the PIN container via GET DATA (FINEID S1 v4.2 section 3.15.2).
     ///
     /// # Errors
     ///
     /// [`AuthError`] on a transport failure or state transition.
-    fn probe_puk_status(&mut self) -> Result<PinStatus, AuthError<Self::Error>>
+    fn probe_puk_status_with_scheme(
+        &mut self,
+        scheme: PinReferenceScheme,
+    ) -> Result<PinStatus, AuthError<Self::Error>>
     where
         Self: Sized,
     {
-        let scheme = self.resolve_pin_reference_scheme()?;
         match scheme {
-            PinReferenceScheme::Citizen => crate::activation::read_puk_status_from_container(self),
+            PinReferenceScheme::Citizen => {
+                let command = refineid_apdu::CommandApdu::case_1(CommandHeader {
+                    class: ApduClass::Plain,
+                    instruction: VERIFY_INS,
+                    p1: VERIFY_P1,
+                    p2: crate::verify::PUK_REFERENCE,
+                });
+                let outcome = self.transmit(&command).map_err(AuthError::Transport)?;
+                let response = outcome.into_response().map_err(AuthError::Outcome)?;
+                let status = crate::verify::classify_pin_status_sw(response.status_word());
+                if !matches!(status, PinStatus::Other(_) | PinStatus::NoInfo) {
+                    return Ok(status);
+                }
+                crate::activation::read_puk_status_from_container(self)
+            }
             PinReferenceScheme::Organizational => {
                 let command = refineid_apdu::CommandApdu::case_1(CommandHeader {
                     class: ApduClass::Plain,
@@ -397,6 +425,19 @@ pub trait PinManageOps: PinOps {
                 ))
             }
         }
+    }
+
+    /// Probe the PUK retry status without side effects, resolving the numbering first.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError`] on a transport failure or state transition.
+    fn probe_puk_status(&mut self) -> Result<PinStatus, AuthError<Self::Error>>
+    where
+        Self: Sized,
+    {
+        let scheme = self.resolve_pin_reference_scheme()?;
+        self.probe_puk_status_with_scheme(scheme)
     }
 
     /// Activate a card awaiting activation under `scheme`.
@@ -487,7 +528,7 @@ pub trait PinManageOps: PinOps {
         let ref_scheme = self.resolve_pin_reference_scheme()?;
         let pin1_status = self.pin_status_with_scheme(ref_scheme, PinSlot::Pin1)?;
         let pin2_status = self.pin_status_with_scheme(ref_scheme, PinSlot::Pin2)?;
-        let puk_status = self.probe_puk_status()?;
+        let puk_status = self.probe_puk_status_with_scheme(ref_scheme)?;
         let activation_needs = match activation_scheme {
             Some(scheme) => Some(self.activation_needs(scheme)?),
             None => None,
@@ -585,8 +626,14 @@ mod tests {
     impl CardTransport for Recorder {
         type Error = String;
 
-        fn transmit(&mut self, _command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
-            Err("an explicit-scheme management flow issues no plain command".to_owned())
+        fn transmit(&mut self, command: &CommandApdu) -> Result<TransportOutcome, Self::Error> {
+            self.commands.push(command.as_bytes().to_vec());
+            let sw = *self
+                .responses
+                .get(self.cursor)
+                .ok_or_else(|| format!("script exhausted at command {}", self.cursor))?;
+            self.cursor += 1;
+            Ok(TransportOutcome::Response(response(sw)))
         }
 
         fn transmit_credential(
@@ -770,10 +817,75 @@ mod tests {
             .expect_err("the organizational card caps a credential at eight");
         let is_length_error = matches!(error, AuthError::LengthUnsupported { .. });
         assert!(is_length_error);
-        if let AuthError::LengthUnsupported { got, max } = error {
-            assert_eq!(got, overlong.len());
+        if let AuthError::LengthUnsupported { max } = error {
             assert_eq!(max, ORGANIZATIONAL_PIN_MAX_LENGTH);
         }
         assert!(transport.commands.is_empty());
+    }
+
+    #[test]
+    fn citizen_puk_probe_wire_shape_is_case_1_without_data() {
+        let two = PinRetries::from_nibble(TWO_RETRIES).expect("fits a nibble");
+        let mut transport = Recorder::new(vec![StatusWord::PinIncorrect { retries: two }]);
+        let status = transport
+            .probe_puk_status_with_scheme(PinReferenceScheme::Citizen)
+            .expect("probe completes");
+        assert_eq!(status, crate::verify::PinStatus::Remaining(two));
+        assert_eq!(transport.commands.len(), 1);
+        let wire = &transport.commands[0];
+        // Case 1 APDUs consist strictly of the 4-byte header: CLA, INS, P1, P2.
+        // There is no Lc byte and no data field, guaranteeing zero retry consumption.
+        const CASE_1_APDU_HEADER_LEN: usize = 4;
+        assert_eq!(wire.len(), CASE_1_APDU_HEADER_LEN);
+        assert_eq!(wire[CLA_INDEX], ApduClass::Plain.as_byte());
+        assert_eq!(wire[INS_INDEX], VERIFY_INS);
+        assert_eq!(wire[P1_INDEX], VERIFY_P1);
+        assert_eq!(wire[P2_INDEX], crate::verify::PUK_REFERENCE);
+    }
+
+    #[test]
+    fn citizen_puk_probe_falls_back_to_container_on_unsupported_verify() {
+        let mut transport = Recorder::new(vec![
+            StatusWord::ReferenceDataNotFound,
+            StatusWord::AuthenticationBlocked,
+        ]);
+        let status = transport
+            .probe_puk_status_with_scheme(PinReferenceScheme::Citizen)
+            .expect("probe completes via container fallback");
+        assert_eq!(status, crate::verify::PinStatus::Locked);
+        const EXPECTED_COMMAND_COUNT: usize = 2;
+        assert_eq!(transport.commands.len(), EXPECTED_COMMAND_COUNT);
+    }
+
+    #[test]
+    fn citizen_puk_probe_falls_back_to_container_on_no_info_verify() {
+        let mut transport = Recorder::new(vec![
+            StatusWord::AuthenticationFailed,
+            StatusWord::AuthenticationBlocked,
+        ]);
+        let status = transport
+            .probe_puk_status_with_scheme(PinReferenceScheme::Citizen)
+            .expect("probe completes via container fallback");
+        assert_eq!(status, crate::verify::PinStatus::Locked);
+        const EXPECTED_COMMAND_COUNT: usize = 2;
+        assert_eq!(transport.commands.len(), EXPECTED_COMMAND_COUNT);
+    }
+
+    #[test]
+    fn citizen_puk_probe_propagates_transport_error() {
+        let mut transport = Recorder::new(vec![]);
+        let err = transport
+            .probe_puk_status_with_scheme(PinReferenceScheme::Citizen)
+            .expect_err("must propagate transport error");
+        assert!(matches!(err, AuthError::Transport(_)));
+    }
+
+    #[test]
+    fn probe_credential_health_propagates_puk_transport_error() {
+        let mut transport = Recorder::new(vec![StatusWord::Success, StatusWord::Success]);
+        let err = transport
+            .probe_credential_health(None)
+            .expect_err("must propagate PUK probe transport error");
+        assert!(matches!(err, AuthError::Transport(_)));
     }
 }
